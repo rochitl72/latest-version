@@ -13,6 +13,7 @@ export default function EditableBbox({
   imageHeight,
   scale,
   selected,
+  readOnly,
   onSelect,
   onChange,
   onChangeEnd,
@@ -151,7 +152,7 @@ export default function EditableBbox({
         stroke={color}
         strokeWidth={strokeW}
         fill={fill}
-        draggable={selected}
+        draggable={selected && !readOnly}
         dragBoundFunc={dragBoundFunc}
         onDragMove={handleBodyDrag}
         onDragEnd={handleBodyDragEnd}
@@ -194,7 +195,7 @@ export default function EditableBbox({
               fill="#fff"
               stroke={color}
               strokeWidth={1.5 / scale}
-              draggable
+              draggable={!readOnly}
               onDragMove={(e) => handleResize(h, e, false)}
               onDragEnd={(e) => handleResize(h, e, true)}
               onMouseEnter={(e) => {

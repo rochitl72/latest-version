@@ -11,6 +11,7 @@ export default function EditableKeypoint({
   imageHeight,
   scale,
   selected,
+  readOnly,
   onSelect,
   onChange,
   onChangeEnd,
@@ -67,7 +68,7 @@ export default function EditableKeypoint({
           fill={p.v === 0 ? "#444" : color}
           stroke="#fff"
           strokeWidth={1.5 / scale}
-          draggable={selected}
+          draggable={selected && !readOnly}
           onDragMove={(e) => onVertexDrag(i, e, false)}
           onDragEnd={(e) => onVertexDrag(i, e, true)}
         />

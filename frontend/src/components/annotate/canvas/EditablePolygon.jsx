@@ -35,6 +35,7 @@ export default function EditablePolygon({
   imageHeight,
   scale,
   selected,
+  readOnly,
   onSelect,
   onChange,
   onChangeEnd,
@@ -151,7 +152,7 @@ export default function EditablePolygon({
         dash={selected ? [8 / scale, 4 / scale] : undefined}
         onClick={onSelect}
         onDblClick={onBodyDblClick}
-        draggable={selected}
+        draggable={selected && !readOnly}
         onDragMove={(e) => onBodyDrag(e, false)}
         onDragEnd={(e) => onBodyDrag(e, true)}
       />
@@ -207,7 +208,7 @@ export default function EditablePolygon({
             fill="#fff"
             stroke={color}
             strokeWidth={1.5 / scale}
-            draggable
+            draggable={!readOnly}
             onDragMove={(e) => onVertexDrag(i, e, false)}
             onDragEnd={(e) => onVertexDrag(i, e, true)}
             onClick={(e) => onVertexClick(i, e)}

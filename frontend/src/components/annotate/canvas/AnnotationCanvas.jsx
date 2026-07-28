@@ -36,6 +36,7 @@ import {
 import { maskFill, maskStroke } from "../../../utils/colors";
 import EditableBbox from "./EditableBbox";
 import EditablePolygon from "./EditablePolygon";
+import EditableEllipse from "./EditableEllipse";
 import EditableKeypoint from "./EditableKeypoint";
 import BrushOverlay from "./BrushOverlay";
 
@@ -515,8 +516,16 @@ export default function AnnotationCanvas({
     const onChangeEnd = async (newGeo) => {
       const original = dragSnapshots.current[ann.id] ?? ann.geometry;
       delete dragSnapshots.current[ann.id];
-      // Push the command with the correct "before" snapshot
-      await push(makeUpdateGeometryCmd({ ...ann, geometry: original }, newGeo));
+      try {
+        // Push the command with the correct "before" snapshot
+        await push(makeUpdateGeometryCmd({ ...ann, geometry: original }, newGeo));
+      } catch {
+        // The server refused the edit (e.g. 403 on an approved image). The
+        // drag already moved the shape locally for responsiveness, so put it
+        // back — otherwise the canvas keeps showing a position that was never
+        // saved, and the user has no idea their work was rejected.
+        updateAnnotationLocal(ann.id, { geometry: original });
+      }
     };
 
     if (ann.type === "bbox") {
@@ -529,6 +538,7 @@ export default function AnnotationCanvas({
           imageHeight={imageHeight}
           scale={scale}
           selected={isSelected && activeTool === "select"}
+          readOnly={readOnly}
           onSelect={onSelect}
           onChange={onChange}
           onChangeEnd={onChangeEnd}
@@ -546,6 +556,7 @@ export default function AnnotationCanvas({
           imageHeight={imageHeight}
           scale={scale}
           selected={isSelected && activeTool === "select"}
+          readOnly={readOnly}
           onSelect={onSelect}
           onChange={onChange}
           onChangeEnd={onChangeEnd}
@@ -554,33 +565,24 @@ export default function AnnotationCanvas({
     }
 
     if (ann.type === "ellipse") {
-      const g = ann.geometry;
-      const color = maskStroke(label?.color, isSelected);
-      const fill = maskFill(label?.color, isSelected);
+      // Was previously drawn inline as a static shape with no drag and no
+      // handles, so an ellipse was the one annotation you could create but
+      // never adjust. Now uses the same editable component pattern as bbox
+      // and polygon.
       return (
-        <Group key={ann.id} onClick={onSelect}>
-          <Ellipse
-            x={g.cx * imageWidth}
-            y={g.cy * imageHeight}
-            radiusX={g.rx * imageWidth}
-            radiusY={g.ry * imageHeight}
-            stroke={color}
-            strokeWidth={2 / scale}
-            fill={fill}
-            dash={isSelected ? [8 / scale, 4 / scale] : undefined}
-          />
-
-          {label && (
-            <Text
-              x={(g.cx - g.rx) * imageWidth}
-              y={(g.cy - g.ry) * imageHeight - 16 / scale}
-              text={label.name}
-              fontSize={12 / scale}
-              fill={color}
-              listening={false}
-            />
-          )}
-        </Group>
+        <EditableEllipse
+          key={ann.id}
+          ann={ann}
+          label={label}
+          imageWidth={imageWidth}
+          imageHeight={imageHeight}
+          scale={scale}
+          selected={isSelected && activeTool === "select"}
+          readOnly={readOnly}
+          onSelect={onSelect}
+          onChange={onChange}
+          onChangeEnd={onChangeEnd}
+        />
       );
     }
 
@@ -598,6 +600,7 @@ export default function AnnotationCanvas({
           imageHeight={imageHeight}
           scale={scale}
           selected={isSelected && activeTool === "select"}
+          readOnly={readOnly}
           onSelect={onSelect}
           onChange={(geo) => {
             if (!dragSnapshots.current[ann.id]) {
