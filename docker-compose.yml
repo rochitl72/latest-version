@@ -59,8 +59,16 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-annoforge}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
     volumes:
-      - storage:/data/storage
-      - exports:/data/exports
+      # Bind mounts, not named volumes: uploaded images and generated exports
+      # land in a REAL folder you can open, back up with rsync, and inspect
+      # without `docker exec`. Defaults to ./data/ next to this file; point
+      # STORAGE_PATH/EXPORT_PATH at a mounted data disk on a real server, e.g.
+      #   STORAGE_PATH=/var/lib/rbg-studio/storage
+      #
+      # The database is deliberately NOT bind-mounted — see the volumes:
+      # section at the bottom for why.
+      - ${STORAGE_PATH:-./data/storage}:/data/storage
+      - ${EXPORT_PATH:-./data/exports}:/data/exports
     depends_on:
       postgres:
         condition: service_healthy
@@ -107,7 +115,18 @@ services:
         condition: service_healthy
 
 volumes:
-  pgdata:     # database files
-  storage:    # uploaded images
-  exports:    # generated dataset exports
+  # The database stays a NAMED VOLUME on purpose. Postgres wants a data
+  # directory with exact ownership and permissions (it refuses to start if the
+  # directory is group/world readable), and it does a lot of small synchronous
+  # writes — both of which behave badly on a bind-mounted host folder,
+  # especially through Docker Desktop's file sharing on macOS.
+  #
+  # You do not need filesystem access to back it up: scripts/backup.sh runs
+  # pg_dump, which is the correct way to snapshot a database anyway — a copy of
+  # the data directory taken while Postgres is running is not restorable.
+  pgdata:
   pgadmin:    # pgAdmin's own settings (only used with --profile tools)
+
+# Uploaded images and exports are no longer listed here — they are bind mounts
+# on the backend service, so they live in ./data/ (or wherever STORAGE_PATH and
+# EXPORT_PATH point).

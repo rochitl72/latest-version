@@ -16,7 +16,8 @@
 #
 # Configure via environment (or the backend/.env values):
 #   POSTGRES_USER  POSTGRES_PASSWORD  POSTGRES_HOST  POSTGRES_PORT  POSTGRES_DB
-#   STORAGE_DIR    where uploaded images live   (default: backend/storage)
+#   STORAGE_PATH   where uploaded images live   (default: ./data/storage for
+#                  the Docker setup, backend/storage when run from source)
 #   BACKUP_DIR     where backups are written    (default: ./backups)
 #   RETENTION_DAYS how many days to keep        (default: 14)
 # ─────────────────────────────────────────────────────────────────────
@@ -38,7 +39,23 @@ POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-annoforge}"
 POSTGRES_HOST="${POSTGRES_HOST:-localhost}"
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 POSTGRES_DB="${POSTGRES_DB:-annoforge}"
-STORAGE_DIR="${STORAGE_DIR:-$BACKEND/storage}"
+# Where the uploaded images actually are. The two supported setups put them in
+# different places, so pick whichever exists rather than guessing:
+#   Docker  -> ./data/storage      (bind-mounted, set by STORAGE_PATH)
+#   native  -> backend/storage     (the app's default when run from source)
+# An explicit STORAGE_DIR or STORAGE_PATH always wins.
+if [[ -n "${STORAGE_DIR:-}" ]]; then
+  :
+elif [[ -n "${STORAGE_PATH:-}" ]]; then
+  STORAGE_DIR="$STORAGE_PATH"
+elif [[ -d "$ROOT/data/storage" ]]; then
+  STORAGE_DIR="$ROOT/data/storage"
+else
+  STORAGE_DIR="$BACKEND/storage"
+fi
+# Resolve a relative STORAGE_PATH (e.g. "./data/storage") against the repo root.
+[[ "$STORAGE_DIR" = /* ]] || STORAGE_DIR="$ROOT/${STORAGE_DIR#./}"
+
 BACKUP_DIR="${BACKUP_DIR:-$ROOT/backups}"
 RETENTION_DAYS="${RETENTION_DAYS:-14}"
 

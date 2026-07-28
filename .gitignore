@@ -36,3 +36,8 @@ backend/checkpoints/
 backend/.pids/
 logs/
 .pids/
+
+# ─── Runtime data from the Docker deployment ─────────────────
+# docker-compose bind-mounts these, so uploaded images and generated export
+# bundles now appear here as real folders. They are user data, never source.
+data/

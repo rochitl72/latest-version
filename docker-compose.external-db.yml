@@ -53,8 +53,10 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:?set CORS_ORIGINS in .env, e.g. ["http://your-host:8080"]}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
     volumes:
-      - storage:/data/storage
-      - exports:/data/exports
+      # Bind mounts — see docker-compose.yml for the reasoning. Override with
+      # STORAGE_PATH / EXPORT_PATH to place them on a data disk.
+      - ${STORAGE_PATH:-./data/storage}:/data/storage
+      - ${EXPORT_PATH:-./data/exports}:/data/exports
     # Published to the host: the browser calls this directly (see frontend
     # build args below), so — unlike the bundled-Postgres compose file — this
     # port must be reachable, not internal-only.
@@ -83,6 +85,5 @@ services:
       backend:
         condition: service_healthy
 
-volumes:
-  storage:    # uploaded images
-  exports:    # generated dataset exports
+# No named volumes: images and exports are bind mounts on the backend service
+# (./data/ by default), and the database lives on your existing Postgres server.

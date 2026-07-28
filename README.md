@@ -141,8 +141,15 @@ docker compose up -d --build
 ```
 
 Log in with the `BOOTSTRAP_ADMIN_USERNAME` / `BOOTSTRAP_ADMIN_PASSWORD` you set
-in `.env`. Data persists in named Docker volumes (`pgdata`, `storage`,
-`exports`) across restarts.
+in `.env`. Data persists across restarts, in two different places on purpose:
+
+| What | Where | Why |
+|---|---|---|
+| Uploaded images, annotation JSON backups, export bundles | **`./data/`** — a real folder next to this README | So you can open, inspect and `rsync` them without `docker exec`. Move it with `STORAGE_PATH` / `EXPORT_PATH` in `.env`. |
+| The PostgreSQL database | the `pgdata` **Docker volume** | Postgres needs exact ownership on its data directory and does many small synchronous writes; both behave badly on a bind mount. Back it up with `pg_dump` (see `scripts/backup.sh`), which is the only restorable way anyway. |
+
+So `./data/storage/users/{id}_{username}/…` appears on your machine as soon as
+someone uploads an image.
 
 ```bash
 docker compose logs -f          # watch logs
