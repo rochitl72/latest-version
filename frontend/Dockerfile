@@ -36,4 +36,18 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 # Only the compiled assets ship in the final image — no Node, no source.
 COPY --from=build /app/dist /usr/share/nginx/html
 
+# Make every asset world-readable.
+#
+# Docker's COPY preserves file modes from the build context, and Vite's
+# public/ copy preserves them too. So a source file that happens to be mode
+# 600 on the developer's machine (macOS umask, a restrictive checkout, a file
+# pulled out of an archive) arrives here still 600 and owned by root — and the
+# nginx worker, which drops to the unprivileged `nginx` user, then cannot read
+# it. The result is a silent 403 on that one asset: the page loads but the
+# logo renders as a broken image.
+#
+# a+rX  = readable by everyone; the capital X adds +x to directories only, so
+#         they stay traversable without marking files executable.
+RUN chmod -R a+rX /usr/share/nginx/html
+
 EXPOSE 80
