@@ -12,6 +12,11 @@
 #   bash scripts/db.sh watch        live view, refreshes every 2s
 #   bash scripts/db.sh psql         drop into an interactive psql shell
 #   bash scripts/db.sh sql "..."    run any SQL you like
+#
+# Works against BOTH setups. It uses the Docker stack if the postgres
+# container is running, otherwise a native Postgres on this machine.
+# Force one:   MODE=local bash scripts/db.sh users
+#              MODE=docker bash scripts/db.sh users
 # ─────────────────────────────────────────────────────────────────────
 set -uo pipefail
 
@@ -19,14 +24,43 @@ DB="${DB:-rbg-postgres}"
 BACKEND="${BACKEND:-rbg-backend}"
 PGUSER_="${POSTGRES_USER:-annoforge}"
 PGDB_="${POSTGRES_DB:-annoforge}"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-q() { docker exec "$DB" psql -U "$PGUSER_" -d "$PGDB_" -c "$1"; }
-qt() { docker exec "$DB" psql -U "$PGUSER_" -d "$PGDB_" -tAc "$1"; }
-
-docker ps --format '{{.Names}}' | grep -q "^${DB}$" || {
-  echo "The '$DB' container isn't running. Start it with: docker compose up -d"
+# The project runs two ways, so this script works with either:
+#   docker  — the compose stack; psql runs inside the postgres container
+#   local   — a native Postgres on this machine, storage on the real filesystem
+# Docker wins if its container is up. Force one with:  MODE=local bash scripts/db.sh …
+if [[ "${MODE:-}" == "local" ]]; then
+  MODE=local
+elif [[ "${MODE:-}" == "docker" ]] || docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${DB}$"; then
+  MODE=docker
+elif command -v psql >/dev/null && pg_isready -q 2>/dev/null; then
+  MODE=local
+else
+  echo "No database found."
+  echo "  Docker mode:  docker compose up -d"
+  echo "  Local  mode:  brew services start postgresql@16"
   exit 1
-}
+fi
+
+if [[ "$MODE" == "docker" ]]; then
+  q()  { docker exec "$DB" psql -U "$PGUSER_" -d "$PGDB_" -c "$1"; }
+  qt() { docker exec "$DB" psql -U "$PGUSER_" -d "$PGDB_" -tAc "$1"; }
+  # Files live inside the backend container.
+  fexists() { docker exec "$BACKEND" test -f "$1"; }
+  fsize()   { docker exec "$BACKEND" stat -c%s "$1" 2>/dev/null; }
+  ftree()   { docker exec "$BACKEND" sh -c 'find /data/storage -maxdepth 6 | sort | sed "s|/data/storage|.|"'; }
+  ishell()  { docker exec -it "$DB" psql -U "$PGUSER_" -d "$PGDB_"; }
+else
+  q()  { psql -d "$PGDB_" -c "$1"; }
+  qt() { psql -d "$PGDB_" -tAc "$1"; }
+  # Files live on this Mac, under backend/storage.
+  fexists() { test -f "$1"; }
+  fsize()   { stat -f%z "$1" 2>/dev/null || stat -c%s "$1" 2>/dev/null; }
+  ftree()   { find "$ROOT/backend/storage" -maxdepth 6 2>/dev/null | sort | sed "s|$ROOT/backend/storage|.|"; }
+  ishell()  { psql -d "$PGDB_"; }
+fi
+echo "[mode: $MODE]"
 
 case "${1:-counts}" in
 
@@ -61,8 +95,8 @@ paths)
   MISSING=0; FOUND=0
   while IFS='|' read -r id path; do
     [[ -z "$path" ]] && continue
-    if docker exec "$BACKEND" test -f "$path"; then
-      SIZE=$(docker exec "$BACKEND" stat -c%s "$path" 2>/dev/null)
+    if fexists "$path"; then
+      SIZE=$(fsize "$path")
       printf "  ✅ image %-4s %8s bytes  %s\n" "$id" "$SIZE" "$path"
       FOUND=$((FOUND+1))
     else
@@ -76,7 +110,7 @@ paths)
   echo "Annotation JSON backups (written on the first saved shape):"
   while IFS='|' read -r id path; do
     [[ -z "$path" ]] && continue
-    docker exec "$BACKEND" test -f "$path" \
+    fexists "$path" \
       && echo "  ✅ image $id  $path" \
       || echo "  ❌ image $id  MISSING  $path"
   done < <(qt "SELECT id || '|' || coalesce(annotations_path,'') FROM images
@@ -84,9 +118,8 @@ paths)
   ;;
 
 tree)
-  echo "STORAGE_DIR tree inside the backend container:"
-  docker exec "$BACKEND" sh -c \
-    'find /data/storage -maxdepth 6 | sort | sed "s|/data/storage|.|"'
+  echo "STORAGE_DIR tree:"
+  ftree
   ;;
 
 activity)
@@ -124,7 +157,7 @@ watch)
 
 psql)
   echo "Interactive psql. Try  \\dt  to list tables,  \\d users  to describe one,  \\q  to quit."
-  docker exec -it "$DB" psql -U "$PGUSER_" -d "$PGDB_"
+  ishell
   ;;
 
 sql)
