@@ -1,8 +1,20 @@
 // Editable bbox — drag body to move, drag any of 8 handles to resize.
 // All math is in IMAGE PIXEL space; conversion to/from normalized happens
 // in the parent canvas at create/save time.
+//
+// ─── Why the drag is written this way ───────────────────────────────
+// The shape used to update React state on every onDragMove. That state write
+// re-rendered the Rect, and react-konva then assigned x/y back onto the very
+// node Konva was mid-drag on. React 18 batches renders, so the write landed a
+// frame late carrying a stale value, and Konva's next drag step — which works
+// from the node's current position plus the pointer delta — compounded the
+// error. The shape drifted further from the cursor the longer you dragged.
+//
+// Konva already moves the node itself, so React does not need to re-render for
+// the shape to follow the pointer. The whole Group is now draggable (so the
+// outline, its label and the handles all travel together), nothing is written
+// to state during the drag, and the new geometry is committed once on release.
 
-import { useRef } from "react";
 import { Group, Rect, Text } from "react-konva";
 import { maskFill, maskStroke } from "../../../utils/colors";
 
@@ -28,21 +40,6 @@ export default function EditableBbox({
   const w = g.w * imageWidth;
   const h = g.h * imageHeight;
 
-  // Track drag state to compute new dims live
-  const startRef = useRef(null);
-
-  // Pixels → normalized. Deliberately does NOT clamp the position.
-  //
-  // It used to clamp x/y into [0,1], and that broke dragging: onDragMove wrote
-  // the clamped value straight back to state, React re-rendered the Rect at
-  // that clamped position while Konva was still dragging it, and from then on
-  // the shape sat at a fixed offset from the cursor for the rest of the drag.
-  // The bound was wrong too — clamping the ORIGIN to 1.0 ignores the box's own
-  // width, so a box could end up almost entirely off the image.
-  //
-  // Containment is now enforced by dragBoundFunc below (for moves) and by
-  // clampBox (for resizes), both of which keep the node and the pointer in
-  // agreement.
   const normalize = (px, py, pw, ph) => ({
     x: px / imageWidth,
     y: py / imageHeight,
@@ -50,44 +47,56 @@ export default function EditableBbox({
     h: Math.max(0.001, Math.min(1, ph / imageHeight)),
   });
 
-  /** Keep the WHOLE box inside the image (used by the resize path). */
-  const clampBox = (px, py, pw, ph) => {
-    const cw = Math.max(4, Math.min(imageWidth, pw));
-    const ch = Math.max(4, Math.min(imageHeight, ph));
-    return {
-      px: Math.max(0, Math.min(imageWidth - cw, px)),
-      py: Math.max(0, Math.min(imageHeight - ch, py)),
-      pw: cw,
-      ph: ch,
-    };
-  };
-
-  // Konva calls this during a drag with the proposed ABSOLUTE (stage) position
-  // and uses whatever we return, so the node can never leave the image and the
-  // pointer stays locked to it. Converting through the parent's absolute
-  // transform makes it correct at any zoom or pan offset.
+  // ─── Moving the whole box ──────────────────────────────────────────
+  // The Group starts at (0,0) and its children sit at absolute image
+  // coordinates, so a drag offsets everything by (dx, dy). Konva is left in
+  // sole control of the node position for the duration.
   //
-  // Must be a normal function: Konva binds `this` to the dragged node.
-  function dragBoundFunc(pos) {
+  // Normal function: Konva binds `this` to the dragged node.
+  function bodyDragBound(pos) {
     const parent = this.getParent();
     if (!parent) return pos;
     const toLocal = parent.getAbsoluteTransform().copy().invert();
-    const local = toLocal.point(pos);
-    const cx = Math.max(0, Math.min(imageWidth - w, local.x));
-    const cy = Math.max(0, Math.min(imageHeight - h, local.y));
-    return parent.getAbsoluteTransform().point({ x: cx, y: cy });
+    const p = toLocal.point(pos);
+    // Allowed offsets keep the box fully on the image.
+    const dx = Math.max(-x, Math.min(imageWidth - w - x, p.x));
+    const dy = Math.max(-y, Math.min(imageHeight - h - y, p.y));
+    return parent.getAbsoluteTransform().point({ x: dx, y: dy });
   }
 
-  const handleBodyDrag = (e) => {
+  // Snapshot the original geometry for undo without altering anything: the
+  // parent stores the first value it sees during a gesture.
+  const handleDragStart = () => onChange(g);
+
+  const handleDragEnd = (e) => {
     const node = e.target;
-    onChange(normalize(node.x(), node.y(), w, h));
-  };
-  const handleBodyDragEnd = (e) => {
-    const node = e.target;
-    onChangeEnd(normalize(node.x(), node.y(), w, h));
+    const dx = node.x();
+    const dy = node.y();
+    node.position({ x: 0, y: 0 }); // children carry the new absolute position
+    onChangeEnd(normalize(x + dx, y + dy, w, h));
   };
 
-  // Resize handle drag → compute new x/y/w/h from corner
+  // ─── Resizing ──────────────────────────────────────────────────────
+  // Handles keep live feedback — you need to see the box follow as you drag a
+  // corner. That is safe because a handle's re-rendered position is derived
+  // from where you dragged it, so there is nothing to fight. Containment lives
+  // in each handle's dragBoundFunc rather than in the state write, for the
+  // same reason as above.
+  const handleBound = (which) =>
+    function (pos) {
+      const parent = this.getParent();
+      if (!parent) return pos;
+      const toLocal = parent.getAbsoluteTransform().copy().invert();
+      const p = toLocal.point(pos);
+      let px = Math.max(0, Math.min(imageWidth, p.x));
+      let py = Math.max(0, Math.min(imageHeight, p.y));
+      // Edge handles move on one axis only — lock the other so the handle
+      // cannot wander off the edge it belongs to.
+      if (which === "n" || which === "s") px = which === "n" ? x + w / 2 : x + w / 2;
+      if (which === "e" || which === "w") py = y + h / 2;
+      return parent.getAbsoluteTransform().point({ x: px, y: py });
+    };
+
   const handleResize = (which, e, commit) => {
     const px = e.target.x();
     const py = e.target.y();
@@ -97,43 +106,28 @@ export default function EditableBbox({
       nh = h;
     switch (which) {
       case "nw":
-        nx = px;
-        ny = py;
-        nw = x + w - px;
-        nh = y + h - py;
-        break;
+        nx = px; ny = py; nw = x + w - px; nh = y + h - py; break;
       case "n":
-        ny = py;
-        nh = y + h - py;
-        break;
+        ny = py; nh = y + h - py; break;
       case "ne":
-        ny = py;
-        nw = px - x;
-        nh = y + h - py;
-        break;
+        ny = py; nw = px - x; nh = y + h - py; break;
       case "w":
-        nx = px;
-        nw = x + w - px;
-        break;
+        nx = px; nw = x + w - px; break;
       case "e":
-        nw = px - x;
-        break;
+        nw = px - x; break;
       case "sw":
-        nx = px;
-        nw = x + w - px;
-        nh = py - y;
-        break;
+        nx = px; nw = x + w - px; nh = py - y; break;
       case "s":
-        nh = py - y;
-        break;
+        nh = py - y; break;
       case "se":
-        nw = px - x;
-        nh = py - y;
-        break;
+        nw = px - x; nh = py - y; break;
     }
-    // Prevent flip, and keep the resized box inside the image.
-    const c = clampBox(nx, ny, nw, nh);
-    const g2 = normalize(c.px, c.py, c.pw, c.ph);
+    // Guard against inverting the box; position is already bounded above.
+    const minPx = 4;
+    if (nw < minPx) { nw = minPx; if (nx > x) nx = x + w - minPx; }
+    if (nh < minPx) { nh = minPx; if (ny > y) ny = y + h - minPx; }
+
+    const g2 = normalize(nx, ny, nw, nh);
     if (commit) onChangeEnd(g2);
     else onChange(g2);
   };
@@ -142,8 +136,20 @@ export default function EditableBbox({
   const strokeW = 2 / scale;
   const labelOffset = 16 / scale;
 
+  const CURSORS = {
+    nw: "nwse-resize", n: "ns-resize", ne: "nesw-resize",
+    w: "ew-resize", e: "ew-resize",
+    sw: "nesw-resize", s: "ns-resize", se: "nwse-resize",
+  };
+
   return (
-    <Group onClick={onSelect}>
+    <Group
+      onClick={onSelect}
+      draggable={selected && !readOnly}
+      dragBoundFunc={bodyDragBound}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+    >
       <Rect
         x={x}
         y={y}
@@ -152,10 +158,6 @@ export default function EditableBbox({
         stroke={color}
         strokeWidth={strokeW}
         fill={fill}
-        draggable={selected && !readOnly}
-        dragBoundFunc={dragBoundFunc}
-        onDragMove={handleBodyDrag}
-        onDragEnd={handleBodyDragEnd}
         dash={selected ? [8 / scale, 4 / scale] : undefined}
       />
 
@@ -171,8 +173,8 @@ export default function EditableBbox({
         />
       )}
 
-      {/* 8 resize handles — only when selected */}
-      {selected && (
+      {/* 8 resize handles — only when selected and editable */}
+      {selected && !readOnly && (
         <>
           {[
             ["nw", x, y],
@@ -183,9 +185,9 @@ export default function EditableBbox({
             ["sw", x, y + h],
             ["s", x + w / 2, y + h],
             ["se", x + w, y + h],
-          ].map(([h, hx, hy]) => (
+          ].map(([which, hx, hy]) => (
             <Rect
-              key={h}
+              key={which}
               x={hx}
               y={hy}
               width={handleSize}
@@ -195,25 +197,14 @@ export default function EditableBbox({
               fill="#fff"
               stroke={color}
               strokeWidth={1.5 / scale}
-              draggable={!readOnly}
-              onDragMove={(e) => handleResize(h, e, false)}
-              onDragEnd={(e) => handleResize(h, e, true)}
+              draggable
+              dragBoundFunc={handleBound(which)}
+              onDragStart={() => onChange(g)}
+              onDragMove={(e) => handleResize(which, e, false)}
+              onDragEnd={(e) => handleResize(which, e, true)}
               onMouseEnter={(e) => {
                 const stage = e.target.getStage();
-                if (stage) {
-                  const cursors = {
-                    nw: "nwse-resize",
-                    n: "ns-resize",
-                    ne: "nesw-resize",
-                    w: "ew-resize",
-                    e: "ew-resize",
-                    sw: "nesw-resize",
-                    s: "ns-resize",
-                    se: "nwse-resize",
-                    body: "move",
-                  };
-                  stage.container().style.cursor = cursors[h];
-                }
+                if (stage) stage.container().style.cursor = CURSORS[which];
               }}
               onMouseLeave={(e) => {
                 const stage = e.target.getStage();

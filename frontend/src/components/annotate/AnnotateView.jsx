@@ -34,13 +34,11 @@ import {
   MousePointer2,
   Square,
   Hexagon,
-  Brush,
   Circle,
   Move,
   ArrowLeft,
   Plus,
   Trash2,
-  Crosshair,
 } from "lucide-react";
 
 const TOOLS = [
@@ -73,25 +71,11 @@ const TOOLS = [
     hint: "Click corners. Finish when done.",
   },
   {
-    id: "brush",
-    icon: Brush,
-    label: "Brush Mask",
-    shortcut: "K",
-    hint: "Paint a pixel mask. Release to save.",
-  },
-  {
     id: "ellipse",
     icon: Circle,
     label: "Ellipse",
     shortcut: "E",
     hint: "Click and drag to draw an oval.",
-  },
-  {
-    id: "keypoint",
-    icon: Crosshair,
-    label: "Keypoints",
-    shortcut: "J",
-    hint: "Click to place each joint.",
   },
 ];
 
@@ -120,8 +104,6 @@ export default function AnnotateView() {
     readOnly,
     draftPolygon,
     resetPolyDraft,
-    draftKeypoints,
-    resetKeypointDraft,
   } = useEditor();
 
   const {
@@ -133,11 +115,9 @@ export default function AnnotateView() {
     push,
   } = useHistory();
   const [labelName, setLabelName] = useState("");
-  const [keypointTemplate, setKeypointTemplate] = useState("");
   // Surfaces any failed API call in this view. Without it, a rejected promise
   // disappears and the UI silently does nothing.
   const [err, setErr] = useState(null);
-  const [showKeypointField, setShowKeypointField] = useState(false);
   const [currentImage, setCurrentImage] = useState(null);
   const [projectImages, setProjectImages] = useState([]);
   const [showGuide, setShowGuide] = useState(shouldShowOnboarding);
@@ -187,7 +167,6 @@ export default function AnnotateView() {
   }, [activeTool, iid]);
 
   const hasUnsavedPolygon = draftPolygon.length >= 3;
-  const hasUnsavedKeypoints = draftKeypoints.length > 0;
 
   const handleSetTool = (t) => {
     setTool(t);
@@ -200,25 +179,6 @@ export default function AnnotateView() {
     }
     if (hasUnsavedPolygon) {
       await finishPolygon();
-      return;
-    }
-    if (hasUnsavedKeypoints) {
-      await push(
-        makeCreateCmd({
-          image_id: iid,
-          label_id: activeLabelId,
-          type: "keypoint",
-          geometry: {
-            points: draftKeypoints.map((p) => ({
-              name: p.name,
-              x: p.x / imageWidth,
-              y: p.y / imageHeight,
-              v: p.v,
-            })),
-          },
-        }),
-      );
-      resetKeypointDraft();
       return;
     }
     alert("Nothing to save — draw a shape first.");
@@ -270,8 +230,6 @@ export default function AnnotateView() {
         b: "bbox",
         p: "polygon",
         e: "ellipse",
-        k: "brush",
-        j: "keypoint",
       };
       const tool = m[e.key.toLowerCase()];
       if (tool) {
@@ -281,7 +239,7 @@ export default function AnnotateView() {
       }
 
       if (e.key === "Enter" && !readOnly) {
-        if (hasUnsavedPolygon || hasUnsavedKeypoints) {
+        if (hasUnsavedPolygon) {
           e.preventDefault();
           await saveCurrentDraft();
         }
@@ -301,7 +259,6 @@ export default function AnnotateView() {
     annotations,
     selectedIds,
     hasUnsavedPolygon,
-    hasUnsavedKeypoints,
     activeLabelId,
     readOnly,
   ]);
@@ -310,27 +267,15 @@ export default function AnnotateView() {
     if (!labelName.trim()) return;
     const color =
       LABEL_PURPLE_PALETTE[labels.length % LABEL_PURPLE_PALETTE.length];
-    const kpNames = keypointTemplate
-      ? keypointTemplate
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean)
-      : null;
     setErr(null);
     try {
       const created = await createLabel(pid, {
         name: labelName.trim(),
         color,
-        keypoint_names: kpNames,
-        skeleton_edges:
-          kpNames && kpNames.length > 1
-            ? kpNames.slice(0, -1).map((_, i) => [i, i + 1])
-            : null,
       });
       setLabels([...labels, created]);
       setActiveLabel(created.id);
       setLabelName("");
-      setKeypointTemplate("");
     } catch (e) {
       // Creating a label is admin-only. Without this the request just failed
       // in silence and the button looked broken.
@@ -403,7 +348,6 @@ export default function AnnotateView() {
 
   const draftActionLabel = (() => {
     if (hasUnsavedPolygon) return "Save polygon";
-    if (hasUnsavedKeypoints) return "Save keypoints";
     return null;
   })();
 
@@ -535,41 +479,6 @@ export default function AnnotateView() {
               </button>
             </div>
 
-            {/* Keypoints only matter for pose/skeleton work. Showing the field
-                to everyone made it look required — it is not, and most projects
-                (boxes, polygons, masks) never touch it. Hidden behind a toggle. */}
-            {showKeypointField ? (
-              <>
-                <input
-                  className="kp-template"
-                  placeholder="nose, left_eye, right_eye"
-                  value={keypointTemplate}
-                  onChange={(e) => setKeypointTemplate(e.target.value)}
-                />
-                <p className="panel-hint">
-                  Optional. Only for skeleton/pose labelling — names the points
-                  you will click on each object, in order.{" "}
-                  <button
-                    type="button"
-                    className="link-btn"
-                    onClick={() => {
-                      setShowKeypointField(false);
-                      setKeypointTemplate("");
-                    }}
-                  >
-                    Hide
-                  </button>
-                </p>
-              </>
-            ) : (
-              <button
-                type="button"
-                className="link-btn"
-                onClick={() => setShowKeypointField(true)}
-              >
-                + Add keypoints (optional — for pose/skeleton only)
-              </button>
-            )}
 
             {err && (
               <p className="panel-error" role="alert">

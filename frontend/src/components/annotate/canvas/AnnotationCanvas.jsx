@@ -71,9 +71,6 @@ export default function AnnotationCanvas({
     draftPolygon,
     appendPolyPoint,
     resetPolyDraft,
-    draftKeypoints,
-    appendKeypoint,
-    resetKeypointDraft,
     readOnly,
     setClipboard,
     clipboard,
@@ -277,20 +274,9 @@ export default function AnnotationCanvas({
     const needsImage =
       activeTool === "polygon" ||
       activeTool === "bbox" ||
-      activeTool === "ellipse" ||
-      activeTool === "keypoint" ||
-      activeTool === "brush";
+      activeTool === "ellipse";
     if (needsImage && !p) return;
     if (!p) return;
-
-    if (activeTool === "keypoint" && activeLabelId != null) {
-      const lbl = labels.find((l) => l.id === activeLabelId);
-      const names = lbl?.keypoint_names || [];
-      const idx = draftKeypoints.length;
-      if (names.length > 0 && idx >= names.length) return;
-      appendKeypoint({ name: names[idx] || `kp${idx + 1}`, x: p.x, y: p.y });
-      return;
-    }
 
     if (activeTool === "bbox") {
       setBboxStart(p);
@@ -641,9 +627,7 @@ export default function AnnotationCanvas({
                   activeTool === "polygon" ||
                   activeTool === "ellipse"
                 ? "crosshair"
-                : activeTool === "brush"
-                  ? "none"
-                  : "default",
+                : "default",
       }}
     >
       <Stage

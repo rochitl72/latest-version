@@ -14,7 +14,7 @@ const STEPS = [
   },
   {
     title: "2. Draw annotations",
-    body: "B = box · P = polygon · K = brush · S = Smart Select · T = Text Prompting.",
+    body: "V = select · B = box · P = polygon · E = ellipse · H = pan.",
   },
   {
     title: "3. Smart Select & Text Prompting",

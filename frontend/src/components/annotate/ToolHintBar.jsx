@@ -1,5 +1,5 @@
 // ToolHintBar.jsx — contextual how-to hints for the active drawing tool.
-// The HINTS map holds the step-by-step text shown for polygon/brush/bbox/etc.
+// The HINTS map holds the step-by-step text shown for polygon/bbox/ellipse/etc.
 
 const HINTS = {
   polygon: {
@@ -10,17 +10,9 @@ const HINTS = {
       "Click Finish (or double-click / Enter) when you have at least 3 points.",
     ],
   },
-  brush: {
-    title: "Brush mask",
-    steps: ["Click and drag to paint.", "[ ] change size · X = erase."],
-  },
   bbox: {
     title: "Bounding box",
     steps: ["Click and drag to draw a rectangle."],
-  },
-  keypoint: {
-    title: "Keypoints",
-    steps: ["Click to place each joint.", "Press Enter or Finish when done."],
   },
 };
 

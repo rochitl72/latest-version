@@ -38,28 +38,33 @@ export default function EditableEllipse({
     ry: Math.max(0.0005, Math.min(0.5, nry / imageHeight)),
   });
 
-  // Same approach as EditableBbox: let Konva apply the constraint during the
-  // drag so the node and the pointer can never drift apart. Clamping inside
-  // onDragMove instead would write the clamped value back to state mid-drag
-  // and permanently offset the shape from the cursor.
+  // Moving: the whole Group is dragged so the outline, label and handles
+  // travel together, and NOTHING is written to state until release. Writing
+  // during onDragMove made React assign x/y back onto the node Konva was
+  // dragging, which drifted the shape away from the cursor — see the long
+  // comment in EditableBbox.
   //
   // Normal function: Konva binds `this` to the dragged node.
-  function dragBoundFunc(pos) {
+  function bodyDragBound(pos) {
     const parent = this.getParent();
     if (!parent) return pos;
     const toLocal = parent.getAbsoluteTransform().copy().invert();
     const p = toLocal.point(pos);
-    // The ellipse is positioned by its CENTRE, so the limits are inset by the
-    // radii — that keeps the whole shape on the image.
-    const nx = Math.max(rx, Math.min(imageWidth - rx, p.x));
-    const ny = Math.max(ry, Math.min(imageHeight - ry, p.y));
-    return parent.getAbsoluteTransform().point({ x: nx, y: ny });
+    // Group offsets, bounded so the ellipse stays fully on the image. It is
+    // positioned by its CENTRE, so the limits are inset by the radii.
+    const dx = Math.max(rx - cx, Math.min(imageWidth - rx - cx, p.x));
+    const dy = Math.max(ry - cy, Math.min(imageHeight - ry - cy, p.y));
+    return parent.getAbsoluteTransform().point({ x: dx, y: dy });
   }
 
-  const onBodyDrag = (e, commit) => {
-    const geo = normalize(e.target.x(), e.target.y(), rx, ry);
-    if (commit) onChangeEnd(geo);
-    else onChange(geo);
+  const handleDragStart = () => onChange(g);
+
+  const handleDragEnd = (e) => {
+    const node = e.target;
+    const dx = node.x();
+    const dy = node.y();
+    node.position({ x: 0, y: 0 });
+    onChangeEnd(normalize(cx + dx, cy + dy, rx, ry));
   };
 
   // Handles sit at the four cardinal points. Dragging one changes that radius
@@ -75,14 +80,30 @@ export default function EditableEllipse({
     if (which === "s") nry = Math.abs(hy - cy);
     if (which === "n") nry = Math.abs(cy - hy);
 
-    // Don't let a resize push the shape off the image.
-    nrx = Math.max(2, Math.min(nrx, Math.min(cx, imageWidth - cx)));
-    nry = Math.max(2, Math.min(nry, Math.min(cy, imageHeight - cy)));
+    nrx = Math.max(2, nrx);
+    nry = Math.max(2, nry);
 
     const geo = normalize(cx, cy, nrx, nry);
     if (commit) onChangeEnd(geo);
     else onChange(geo);
   };
+
+  // Each cardinal handle is locked to its own axis, and bounded so a resize
+  // cannot push the ellipse off the image.
+  const handleBound = (which) =>
+    function (pos) {
+      const parent = this.getParent();
+      if (!parent) return pos;
+      const toLocal = parent.getAbsoluteTransform().copy().invert();
+      const p = toLocal.point(pos);
+      let px = cx;
+      let py = cy;
+      if (which === "e") px = Math.min(imageWidth, Math.max(cx + 2, p.x));
+      if (which === "w") px = Math.max(0, Math.min(cx - 2, p.x));
+      if (which === "s") py = Math.min(imageHeight, Math.max(cy + 2, p.y));
+      if (which === "n") py = Math.max(0, Math.min(cy - 2, p.y));
+      return parent.getAbsoluteTransform().point({ x: px, y: py });
+    };
 
   const handleSize = 8 / scale;
   const strokeW = 2 / scale;
@@ -90,7 +111,13 @@ export default function EditableEllipse({
   const CURSORS = { n: "ns-resize", s: "ns-resize", e: "ew-resize", w: "ew-resize" };
 
   return (
-    <Group onClick={onSelect}>
+    <Group
+      onClick={onSelect}
+      draggable={selected && !readOnly}
+      dragBoundFunc={bodyDragBound}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+    >
       <Ellipse
         x={cx}
         y={cy}
@@ -100,10 +127,6 @@ export default function EditableEllipse({
         strokeWidth={strokeW}
         fill={fill}
         dash={selected ? [8 / scale, 4 / scale] : undefined}
-        draggable={selected && !readOnly}
-        dragBoundFunc={dragBoundFunc}
-        onDragMove={(e) => onBodyDrag(e, false)}
-        onDragEnd={(e) => onBodyDrag(e, true)}
       />
 
       {label && (
@@ -118,7 +141,7 @@ export default function EditableEllipse({
         />
       )}
 
-      {selected && (
+      {selected && !readOnly && (
         <>
           {[
             ["n", cx, cy - ry],
@@ -137,7 +160,9 @@ export default function EditableEllipse({
               fill="#fff"
               stroke={color}
               strokeWidth={1.5 / scale}
-              draggable={!readOnly}
+              draggable
+              dragBoundFunc={handleBound(which)}
+              onDragStart={() => onChange(g)}
               onDragMove={(e) => onHandleDrag(which, e, false)}
               onDragEnd={(e) => onHandleDrag(which, e, true)}
               onMouseEnter={(e) => {

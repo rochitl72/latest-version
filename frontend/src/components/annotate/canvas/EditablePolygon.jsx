@@ -127,18 +127,39 @@ export default function EditablePolygon({
   };
 
   // Body drag — translate whole polygon
-  const onBodyDrag = (e, commit) => {
-    const dx = e.target.x();
-    const dy = e.target.y();
+  // Moving the polygon.
+  //
+  // This used to recompute every point AND reset the node position on each
+  // onDragMove. That wrote to React state mid-drag, which re-rendered the Line
+  // and reset the node underneath Konva on every frame — the same fight that
+  // made the bbox drift away from the cursor (see EditableBbox for the full
+  // explanation). Konva now owns the node position for the whole gesture and
+  // the points are recomputed exactly once, on release.
+  const onBodyDragStart = () => onChange(ann.geometry);
+
+  const onBodyDragEnd = (e) => {
+    const node = e.target;
+    const dx = node.x();
+    const dy = node.y();
+    node.position({ x: 0, y: 0 }); // the recomputed points carry the offset
     const newPts = ptsPx.map(([x, y]) => [x + dx, y + dy]);
-    if (commit) {
-      onChangeEnd({ points: polyToNorm(newPts, imageWidth, imageHeight) });
-      e.target.position({ x: 0, y: 0 });
-    } else {
-      onChange({ points: polyToNorm(newPts, imageWidth, imageHeight) });
-      e.target.position({ x: 0, y: 0 });
-    }
+    onChangeEnd({ points: polyToNorm(newPts, imageWidth, imageHeight) });
   };
+
+  // Keep the whole polygon on the image while dragging.
+  function bodyDragBound(pos) {
+    const parent = this.getParent();
+    if (!parent) return pos;
+    const xs = ptsPx.map((p) => p[0]);
+    const ys = ptsPx.map((p) => p[1]);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    const toLocal = parent.getAbsoluteTransform().copy().invert();
+    const p = toLocal.point(pos);
+    const dx = Math.max(-minX, Math.min(imageWidth - maxX, p.x));
+    const dy = Math.max(-minY, Math.min(imageHeight - maxY, p.y));
+    return parent.getAbsoluteTransform().point({ x: dx, y: dy });
+  }
 
   return (
     <Group>
@@ -153,8 +174,9 @@ export default function EditablePolygon({
         onClick={onSelect}
         onDblClick={onBodyDblClick}
         draggable={selected && !readOnly}
-        onDragMove={(e) => onBodyDrag(e, false)}
-        onDragEnd={(e) => onBodyDrag(e, true)}
+        dragBoundFunc={bodyDragBound}
+        onDragStart={onBodyDragStart}
+        onDragEnd={onBodyDragEnd}
       />
 
       {/* Label text */}
