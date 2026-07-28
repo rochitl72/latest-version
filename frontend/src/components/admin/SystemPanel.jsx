@@ -1,18 +1,19 @@
 // SystemPanel.jsx — admin "System & Storage" page.
 //
-// Answers, without shelling into a container: where the database is, how big
-// it is, what each user owns on disk, and whether the two still agree.
+// Two halves:
+//   1. Overview  — totals across the whole install, polled live
+//   2. Per user  — pick someone and see BOTH sides of what they own: the real
+//                  folder tree on disk, and their rows in Postgres
 //
-// Live: the overview and per-user storage poll every few seconds, so creating
-// a user or saving an annotation shows up here on its own. Polling rather than
-// a socket is deliberate — this project has no WebSocket, and a few-second
-// delay on an ops panel is fine. The integrity scan is NOT polled: it stats
-// every file on disk, so it runs only when you ask for it.
+// Everything polls on a timer rather than over a socket. This project has no
+// WebSocket by design, and a few seconds' latency on an ops panel costs
+// nothing. There is a pause toggle for when you want a stable view.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   systemOverview,
   systemStorage,
+  systemUser,
   systemIntegrity,
   csvUrl,
 } from "../../lib/api/client";
@@ -25,28 +26,86 @@ import {
   AlertTriangle,
   Pause,
   Play,
-  FolderOpen,
+  Folder,
   FileText,
+  ChevronRight,
+  ChevronDown,
+  Users as UsersIcon,
 } from "lucide-react";
 
-const POLL_MS = 5000;
+const POLL_MS = 4000;
+
+/** Recursive folder tree. Directories start expanded so the shape is obvious. */
+function TreeNode({ node, depth = 0 }) {
+  const [open, setOpen] = useState(depth < 3);
+  if (node.type === "file") {
+    return (
+      <div className="tree-row" style={{ paddingLeft: depth * 16 + 20 }}>
+        <FileText size={12} className="tree-ico" />
+        <span className="tree-name">{node.name}</span>
+        <span className="tree-size">{node.size_human}</span>
+      </div>
+    );
+  }
+  const kids = node.children || [];
+  return (
+    <>
+      <div
+        className="tree-row tree-dir"
+        style={{ paddingLeft: depth * 16 }}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {kids.length > 0 ? (
+          open ? <ChevronDown size={12} /> : <ChevronRight size={12} />
+        ) : (
+          <span style={{ width: 12, display: "inline-block" }} />
+        )}
+        <Folder size={12} className="tree-ico" />
+        <span className="tree-name">{node.name}/</span>
+        {node.missing && <span className="sys-warn">missing</span>}
+        {kids.length > 0 && <span className="tree-size">{kids.length}</span>}
+      </div>
+      {open &&
+        kids.map((c, i) => (
+          <TreeNode key={`${c.name}-${i}`} node={c} depth={depth + 1} />
+        ))}
+      {open && node.truncated && (
+        <div className="tree-row" style={{ paddingLeft: (depth + 1) * 16 + 20 }}>
+          <span className="tree-name sys-muted">… truncated</span>
+        </div>
+      )}
+    </>
+  );
+}
 
 export default function SystemPanel() {
   const [overview, setOverview] = useState(null);
   const [storage, setStorage] = useState(null);
+  const [selectedId, setSelectedId] = useState(null);
+  const [detail, setDetail] = useState(null);
   const [integrity, setIntegrity] = useState(null);
   const [checking, setChecking] = useState(false);
   const [live, setLive] = useState(true);
   const [err, setErr] = useState(null);
-  const [lastTick, setLastTick] = useState(null);
+  const [tick, setTick] = useState(null);
   const timer = useRef(null);
+  const selRef = useRef(null);
+  selRef.current = selectedId;
 
   const poll = useCallback(async () => {
     try {
       const [o, s] = await Promise.all([systemOverview(), systemStorage()]);
       setOverview(o);
       setStorage(s);
-      setLastTick(new Date());
+      // Default to the first non-admin user so the page is useful immediately.
+      if (selRef.current == null && s.users?.length) {
+        const first = s.users.find((u) => u.role !== "admin") || s.users[0];
+        setSelectedId(first.user_id);
+      }
+      if (selRef.current != null) {
+        setDetail(await systemUser(selRef.current));
+      }
+      setTick(new Date());
       setErr(null);
     } catch (e) {
       setErr(e?.message || "Could not read system status.");
@@ -56,6 +115,12 @@ export default function SystemPanel() {
   useEffect(() => {
     poll();
   }, [poll]);
+
+  // Re-fetch immediately when you switch user, without waiting for the timer.
+  useEffect(() => {
+    if (selectedId == null) return;
+    systemUser(selectedId).then(setDetail).catch(() => {});
+  }, [selectedId]);
 
   useEffect(() => {
     if (!live) {
@@ -68,7 +133,6 @@ export default function SystemPanel() {
 
   const runIntegrity = async () => {
     setChecking(true);
-    setErr(null);
     try {
       setIntegrity(await systemIntegrity());
     } catch (e) {
@@ -88,21 +152,14 @@ export default function SystemPanel() {
         <div>
           <h1>System &amp; storage</h1>
           <p className="admin-sub">
-            Where the data lives, and whether the database still agrees with the
-            disk.
+            Live view of the database and what each user owns on disk.
           </p>
         </div>
         <div className="admin-head-actions">
           <span className="sys-tick">
-            {lastTick
-              ? `updated ${lastTick.toLocaleTimeString()}`
-              : "loading…"}
+            {tick ? `updated ${tick.toLocaleTimeString()}` : "loading…"}
           </span>
-          <button
-            className="btn-secondary"
-            onClick={() => setLive((v) => !v)}
-            title={live ? "Pause auto-refresh" : "Resume auto-refresh"}
-          >
+          <button className="btn-secondary" onClick={() => setLive((v) => !v)}>
             {live ? <Pause size={14} /> : <Play size={14} />}
             {live ? "Live" : "Paused"}
           </button>
@@ -118,202 +175,251 @@ export default function SystemPanel() {
         </p>
       )}
 
-      {/* ── Database ────────────────────────────────────────────── */}
+      {/* ── Overview tiles ──────────────────────────────────────── */}
+      <div className="sys-tiles">
+        <div className="sys-tile">
+          <Database size={16} />
+          <strong>{db?.size_human ?? "—"}</strong>
+          <small>{db?.engine ?? "database"}</small>
+        </div>
+        <div className="sys-tile">
+          <HardDrive size={16} />
+          <strong>{st?.size_human ?? "—"}</strong>
+          <small>{st?.file_count ?? 0} files on disk</small>
+        </div>
+        <div className="sys-tile">
+          <UsersIcon size={16} />
+          <strong>{db?.table_counts?.users ?? "—"}</strong>
+          <small>accounts</small>
+        </div>
+        <div className="sys-tile">
+          <Folder size={16} />
+          <strong>{db?.table_counts?.images ?? "—"}</strong>
+          <small>{db?.table_counts?.annotations ?? 0} annotations</small>
+        </div>
+      </div>
+
       <section className="sys-card">
         <h2>
           <Database size={16} /> Database
         </h2>
-        {!db ? (
-          <p className="sidebar-muted">Loading…</p>
-        ) : (
-          <>
-            <dl className="sys-facts">
-              <div>
-                <dt>Engine</dt>
-                <dd>{db.engine}</dd>
-              </div>
-              <div>
-                <dt>Size on disk</dt>
-                <dd>{db.size_human}</dd>
-              </div>
-              <div>
-                <dt>Connection</dt>
-                <dd className="sys-mono">{db.url}</dd>
-              </div>
-              <div>
-                <dt>Environment</dt>
-                <dd>
-                  {env?.environment}
-                  {env && !env.auth_enabled && (
-                    <span className="sys-warn"> · AUTH DISABLED</span>
-                  )}
-                  {env?.seed_test_user && (
-                    <span className="sys-warn"> · test user seeded</span>
-                  )}
-                </dd>
-              </div>
-            </dl>
-
-            <table className="data-table sys-counts">
-              <thead>
-                <tr>
-                  <th>Table</th>
-                  <th className="num">Rows</th>
-                </tr>
-              </thead>
-              <tbody>
-                {Object.entries(db.table_counts).map(([t, n]) => (
-                  <tr key={t}>
-                    <td className="sys-mono">{t}</td>
-                    <td className="num">{n}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <p className="panel-hint">
-              The password is never shown. The database itself is not a file you
-              can open — it is a running server, read through SQL or the CSV
-              downloads below.
-            </p>
-          </>
-        )}
+        <dl className="sys-facts">
+          <div>
+            <dt>Connection</dt>
+            <dd className="sys-mono">{db?.url ?? "—"}</dd>
+          </div>
+          <div>
+            <dt>Storage root</dt>
+            <dd className="sys-mono">{st?.root ?? "—"}</dd>
+          </div>
+          <div>
+            <dt>Environment</dt>
+            <dd>
+              {env?.environment}
+              {env && !env.auth_enabled && (
+                <span className="sys-warn"> · AUTH DISABLED</span>
+              )}
+            </dd>
+          </div>
+        </dl>
+        <div className="sys-chips">
+          {db &&
+            Object.entries(db.table_counts).map(([t, n]) => (
+              <span key={t} className="sys-chip">
+                <span className="sys-mono">{t}</span>
+                <b>{n}</b>
+              </span>
+            ))}
+        </div>
       </section>
 
-      {/* ── Storage ─────────────────────────────────────────────── */}
+      {/* ── Per-user ────────────────────────────────────────────── */}
       <section className="sys-card">
         <h2>
-          <HardDrive size={16} /> File storage
+          <UsersIcon size={16} /> Per user
         </h2>
-        {!st ? (
-          <p className="sidebar-muted">Loading…</p>
-        ) : (
-          <>
-            <dl className="sys-facts">
-              <div>
-                <dt>Root</dt>
-                <dd className="sys-mono">{st.root}</dd>
-              </div>
-              <div>
-                <dt>Total</dt>
-                <dd>
-                  {st.size_human} · {st.file_count} files
-                </dd>
-              </div>
-              <div>
-                <dt>Exports</dt>
-                <dd className="sys-mono">{st.export_root}</dd>
-              </div>
-            </dl>
+        <div className="sys-userbar">
+          {storage?.users?.map((u) => (
+            <button
+              key={u.user_id}
+              className={`sys-usertab ${
+                u.user_id === selectedId ? "active" : ""
+              }`}
+              onClick={() => setSelectedId(u.user_id)}
+            >
+              <span className="sys-mono">{u.folder}</span>
+              <small>
+                {u.size_human} · {u.file_count} files
+              </small>
+            </button>
+          ))}
+        </div>
 
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>User folder</th>
-                  <th>Role</th>
-                  <th className="num">Projects</th>
-                  <th className="num">Files</th>
-                  <th className="num">Size</th>
-                  <th>Log</th>
-                </tr>
-              </thead>
-              <tbody>
-                {storage?.users?.map((u) => (
-                  <tr key={u.user_id}>
-                    <td>
-                      <span className="sys-mono">{u.folder}</span>
-                      {!u.exists && (
-                        <span className="sys-warn"> · folder missing</span>
-                      )}
-                    </td>
-                    <td>
-                      <span className={`role-chip role-${u.role}`}>{u.role}</span>
-                    </td>
-                    <td className="num">{u.projects.length}</td>
-                    <td className="num">{u.file_count}</td>
-                    <td className="num">{u.size_human}</td>
-                    <td>{u.has_activity_log ? "✓" : "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        {detail && (
+          <div className="sys-split">
+            {/* Disk side */}
+            <div className="sys-half">
+              <h3>
+                <HardDrive size={14} /> Files on disk
+              </h3>
+              <p className="sys-mono sys-muted">{detail.storage.path}</p>
+              <div className="sys-tree">
+                <TreeNode node={detail.storage.tree} />
+              </div>
+              {detail.activity_log_tail?.length > 0 && (
+                <details className="sys-details">
+                  <summary>activity.log (last 25 lines)</summary>
+                  <pre className="sys-log">
+                    {detail.activity_log_tail.join("\n")}
+                  </pre>
+                </details>
+              )}
+            </div>
 
-            {storage?.users?.some((u) => u.projects.length > 0) && (
-              <details className="sys-details">
-                <summary>
-                  <FolderOpen size={13} /> Project folders
-                </summary>
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Owner</th>
-                      <th>Project folder</th>
-                      <th className="num">Images</th>
-                      <th className="num">Size</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {storage.users.flatMap((u) =>
-                      u.projects.map((p) => (
-                        <tr key={`${u.user_id}-${p.id}`}>
-                          <td className="sys-mono">{u.username}</td>
-                          <td className="sys-mono">
-                            {p.folder}
-                            {!p.exists && (
-                              <span className="sys-warn"> · missing</span>
-                            )}
-                          </td>
-                          <td className="num">{p.images}</td>
-                          <td className="num">{p.size_human}</td>
+            {/* Database side */}
+            <div className="sys-half">
+              <h3>
+                <Database size={14} /> Rows in Postgres
+              </h3>
+              <dl className="sys-facts">
+                <div>
+                  <dt>Role / status</dt>
+                  <dd>
+                    {detail.user.role} · {detail.user.status}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Annotations authored</dt>
+                  <dd>{detail.database.annotations_authored}</dd>
+                </div>
+                <div>
+                  <dt>Last login</dt>
+                  <dd>
+                    {detail.user.last_login_at
+                      ? new Date(detail.user.last_login_at).toLocaleString()
+                      : "never"}
+                  </dd>
+                </div>
+              </dl>
+
+              {detail.database.projects.length === 0 ? (
+                <p className="sys-muted">No projects assigned.</p>
+              ) : (
+                detail.database.projects.map((p) => (
+                  <div key={p.id} className="sys-proj">
+                    <h4>
+                      {p.name}{" "}
+                      <span className="sys-muted sys-mono">
+                        #{p.id} · {p.size_human}
+                      </span>
+                    </h4>
+                    <table className="data-table sys-imgtable">
+                      <thead>
+                        <tr>
+                          <th>#</th>
+                          <th>File</th>
+                          <th>Status</th>
+                          <th className="num">Ann.</th>
+                          <th>storage_path</th>
                         </tr>
-                      )),
-                    )}
-                  </tbody>
-                </table>
-              </details>
-            )}
-          </>
+                      </thead>
+                      <tbody>
+                        {p.images.map((im) => (
+                          <tr key={im.id}>
+                            <td>{im.id}</td>
+                            <td title={im.filename}>
+                              {im.filename.length > 22
+                                ? im.filename.slice(0, 21) + "…"
+                                : im.filename}
+                            </td>
+                            <td>{im.status}</td>
+                            <td className="num">{im.annotations}</td>
+                            <td className="sys-mono sys-path">
+                              {im.file_exists ? "✅" : "❌"} {im.storage_path}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ))
+              )}
+
+              {detail.database.recent_activity.length > 0 && (
+                <details className="sys-details">
+                  <summary>Recent actions (from activity_log)</summary>
+                  <ul className="sys-list">
+                    {detail.database.recent_activity.map((a) => (
+                      <li key={a.id} className="sys-mono">
+                        {a.at ? new Date(a.at).toLocaleString() : ""} · {a.action}
+                        {a.image_id ? ` · image ${a.image_id}` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+            </div>
+          </div>
         )}
       </section>
 
-      {/* ── Integrity ───────────────────────────────────────────── */}
+      {/* ── Downloads ───────────────────────────────────────────── */}
       <section className="sys-card">
         <h2>
-          <ShieldCheck size={16} /> Database vs disk
+          <Download size={16} /> Download data
         </h2>
+        <div className="sys-downloads">
+          {[
+            ["images", "Images + file paths"],
+            ["annotations", "Annotations"],
+            ["users", "Users"],
+            ["activity", "Activity log"],
+          ].map(([name, title]) => (
+            <a key={name} className="sys-dl" href={csvUrl(name)}>
+              <FileText size={15} />
+              <span>
+                <strong>{title}</strong>
+                <small>CSV</small>
+              </span>
+              <Download size={14} className="sys-dl-icon" />
+            </a>
+          ))}
+        </div>
         <p className="panel-hint">
-          Checks that every stored path still points at a real file, and finds
-          files nothing references. Not run automatically — it stats every file,
-          so it is a manual check.
+          Password hashes are never included. For a full restorable backup run{" "}
+          <span className="sys-mono">scripts/backup.sh</span> on the server.
         </p>
-        <button
-          className="btn-primary"
-          onClick={runIntegrity}
-          disabled={checking}
-        >
+      </section>
+
+      {/* ── Integrity (collapsed — occasional maintenance) ──────── */}
+      <details className="sys-card sys-maint">
+        <summary>
+          <ShieldCheck size={15} /> Maintenance · database vs disk
+        </summary>
+        <p className="panel-hint">
+          Finds images whose file has vanished, and files nothing references.
+          Worth running occasionally — deleting an image leaves its annotation
+          JSON behind, and deleting a project leaves its folder, so unreferenced
+          files build up over time.
+        </p>
+        <button className="btn-secondary" onClick={runIntegrity} disabled={checking}>
           <ShieldCheck size={14} />
           {checking ? "Checking…" : "Run check"}
         </button>
-
         {integrity && (
           <div className="sys-integrity">
             {integrity.ok ? (
               <p className="sys-ok">
-                ✅ All {integrity.checked_images} images match a real file, and
-                nothing is orphaned.
+                ✅ {integrity.checked_images} images all present, nothing orphaned.
               </p>
             ) : (
               <>
                 {integrity.missing_files.length > 0 && (
                   <>
                     <h3 className="sys-bad">
-                      <AlertTriangle size={14} />{" "}
-                      {integrity.missing_files.length} image
-                      {integrity.missing_files.length === 1 ? "" : "s"} with no
-                      file on disk
+                      <AlertTriangle size={14} /> {integrity.missing_files.length}{" "}
+                      image file(s) missing
                     </h3>
-                    <p className="panel-hint">
-                      These will fail to load in the annotator.
-                    </p>
                     <ul className="sys-list">
                       {integrity.missing_files.map((m) => (
                         <li key={m.image_id} className="sys-mono">
@@ -323,41 +429,12 @@ export default function SystemPanel() {
                     </ul>
                   </>
                 )}
-
-                {integrity.missing_annotation_files.length > 0 && (
-                  <>
-                    <h3 className="sys-bad">
-                      <AlertTriangle size={14} />{" "}
-                      {integrity.missing_annotation_files.length} missing
-                      annotation backup{" "}
-                      {integrity.missing_annotation_files.length === 1
-                        ? "file"
-                        : "files"}
-                    </h3>
-                    <ul className="sys-list">
-                      {integrity.missing_annotation_files.map((m) => (
-                        <li key={m.image_id} className="sys-mono">
-                          image #{m.image_id} → {m.path}
-                        </li>
-                      ))}
-                    </ul>
-                  </>
-                )}
-
                 {integrity.orphan_count > 0 && (
                   <>
                     <h3 className="sys-bad">
-                      <AlertTriangle size={14} /> {integrity.orphan_count}{" "}
-                      orphaned file
-                      {integrity.orphan_count === 1 ? "" : "s"} ·{" "}
-                      {integrity.orphan_human}
+                      <AlertTriangle size={14} /> {integrity.orphan_count} orphaned
+                      file(s) · {integrity.orphan_human}
                     </h3>
-                    <p className="panel-hint">
-                      On disk but referenced by no database row. Deleting an
-                      image leaves its annotation JSON behind, and deleting a
-                      project leaves its whole folder — so these accumulate.
-                      {integrity.orphans_truncated && " (first 200 shown)"}
-                    </p>
                     <ul className="sys-list">
                       {integrity.orphan_files.map((o) => (
                         <li key={o.path} className="sys-mono">
@@ -371,41 +448,7 @@ export default function SystemPanel() {
             )}
           </div>
         )}
-      </section>
-
-      {/* ── Downloads ───────────────────────────────────────────── */}
-      <section className="sys-card">
-        <h2>
-          <Download size={16} /> Download data
-        </h2>
-        <p className="panel-hint">
-          Spreadsheet-friendly CSV straight from the database. Opens in Excel or
-          Numbers.
-        </p>
-        <div className="sys-downloads">
-          {[
-            ["images", "Images + file paths", "every image, its project, owner and on-disk paths"],
-            ["annotations", "Annotations", "every shape with its label, type and geometry"],
-            ["users", "Users", "accounts, roles and last login"],
-            ["activity", "Activity log", "the full audit trail"],
-          ].map(([name, title, sub]) => (
-            <a key={name} className="sys-dl" href={csvUrl(name)}>
-              <FileText size={15} />
-              <span>
-                <strong>{title}</strong>
-                <small>{sub}</small>
-              </span>
-              <Download size={14} className="sys-dl-icon" />
-            </a>
-          ))}
-        </div>
-        <p className="panel-hint">
-          Password hashes are never included in any export. For a full,
-          restorable backup of the database and image files, run{" "}
-          <span className="sys-mono">scripts/backup.sh</span> on the server —
-          that is an operator task, not a browser download.
-        </p>
-      </section>
+      </details>
     </div>
   );
 }

@@ -113,6 +113,10 @@ app.include_router(
 # authenticates itself with the cookie-capable admin gate (see export.py).
 app.include_router(export.router)
 
+# System CSV downloads: same reasoning as export above — they are opened as
+# <a href> so they authenticate from the cookie, inside each endpoint.
+app.include_router(system.csv_router)
+
 
 @app.get("/api")
 async def api_root():

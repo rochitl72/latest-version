@@ -278,6 +278,7 @@ export const userActivity = (userId) => req(`/activity/users/${userId}`);
 export const systemOverview = () => req("/system/overview");
 export const systemStorage = () => req("/system/storage");
 export const systemIntegrity = () => req("/system/integrity");
+export const systemUser = (id) => req(`/system/user/${id}`);
 
 // CSV downloads. Opened as <a href> so the browser saves the file, which means
 // they authenticate with the login cookie rather than a bearer header.
