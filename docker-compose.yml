@@ -21,6 +21,17 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-annoforge}
     volumes:
       - pgdata:/var/lib/postgresql/data
+    ports:
+      # Published on the LOOPBACK interface only, so a GUI client (TablePlus,
+      # DBeaver, pgAdmin, Postico) on this machine can connect to
+      # localhost:5432 — while the database stays unreachable from the network.
+      #
+      # The "127.0.0.1:" prefix is what makes that true. Writing just
+      # "5432:5432" would bind 0.0.0.0 and expose the database to everyone on
+      # the LAN. On the RBG server, either keep this prefix or delete these two
+      # lines entirely (the backend talks to postgres over the internal compose
+      # network and does not need the port published at all).
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
     healthcheck:
       # The backend waits for this to pass before it starts (see depends_on).
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-annoforge} -d ${POSTGRES_DB:-annoforge}"]
@@ -71,7 +82,32 @@ services:
       backend:
         condition: service_healthy
 
+  # ── Optional: pgAdmin, a database browser in your browser ───────────
+  # Not started by default. Bring it up only when you want it:
+  #     docker compose --profile tools up -d pgadmin
+  #     open http://localhost:5050
+  # Log in with PGADMIN_EMAIL / PGADMIN_PASSWORD (defaults below), then add a
+  # server with  host: postgres   port: 5432   user/password: your POSTGRES_*.
+  # Stop it again with:  docker compose --profile tools down
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: rbg-pgadmin
+    profiles: ["tools"]
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@example.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    ports:
+      - "127.0.0.1:${PGADMIN_PORT:-5050}:80"
+    volumes:
+      - pgadmin:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   pgdata:     # database files
   storage:    # uploaded images
   exports:    # generated dataset exports
+  pgadmin:    # pgAdmin's own settings (only used with --profile tools)
