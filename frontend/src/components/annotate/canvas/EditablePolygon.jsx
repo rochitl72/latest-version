@@ -162,7 +162,17 @@ export default function EditablePolygon({
   }
 
   return (
-    <Group>
+    // The DRAG lives on the Group, not on the filled Line. With it on the Line,
+    // only the fill moved while the label and the vertex handles stayed put
+    // until release — they appeared to lag behind the shape. Dragging the Group
+    // moves every child in one transform, so the whole polygon travels with the
+    // pointer as a single object.
+    <Group
+      draggable={selected && !readOnly}
+      dragBoundFunc={bodyDragBound}
+      onDragStart={onBodyDragStart}
+      onDragEnd={onBodyDragEnd}
+    >
       {/* Filled body */}
       <Line
         points={flatten(ptsPx)}
@@ -173,10 +183,6 @@ export default function EditablePolygon({
         dash={selected ? [8 / scale, 4 / scale] : undefined}
         onClick={onSelect}
         onDblClick={onBodyDblClick}
-        draggable={selected && !readOnly}
-        dragBoundFunc={bodyDragBound}
-        onDragStart={onBodyDragStart}
-        onDragEnd={onBodyDragEnd}
       />
 
       {/* Label text */}
