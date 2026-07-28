@@ -114,7 +114,12 @@ raw=b'\x00'+b'\xff\x00\x00'*8
 png=b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',8,1,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(raw))+chunk(b'IEND',b'')
 open('$TMPIMG','wb').write(png)"
 UP=$(curl -s -X POST "$API/api/projects/$PID/images/upload" "${AUTH[@]}" -F "files=@$TMPIMG")
-IMG_ID=$(echo "$UP" | jq -r '(.images // .)[0].id // empty')
+# The endpoint returns a bare JSON array of the saved images. Handle an object
+# wrapper too, so this keeps working if the response shape is ever changed.
+IMG_ID=$(echo "$UP" | jq -r '
+  if   type == "array"    then .[0].id
+  elif has("images")      then .images[0].id
+  else .id end // empty' 2>/dev/null)
 [[ -n "$IMG_ID" ]] && ok "uploaded image id=$IMG_ID" || { bad "upload failed: $UP"; exit 1; }
 
 DB_PATH=$(sql "SELECT storage_path FROM images WHERE id=$IMG_ID;")
