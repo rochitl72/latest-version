@@ -177,8 +177,13 @@ status 200 "…but an admin may still edit it" \
 hdr "G. Admin safety rails"
 status 409 "duplicate username refused" \
   -X POST "$API/api/users" "${A[@]}" "${J[@]}" -d "{\"username\":\"$AU\",\"password\":\"$PW\",\"role\":\"user\"}"
-status 400 "too-short password refused" \
-  -X POST "$API/api/users" "${A[@]}" "${J[@]}" -d "{\"username\":\"short_$STAMP\",\"password\":\"a\",\"role\":\"user\"}"
+# Password policy is length-only and configurable via MIN_PASSWORD_LENGTH,
+# which defaults to 1. So a 1-char password is valid and only an empty one is
+# refused. If you raise MIN_PASSWORD_LENGTH, flip these two expectations.
+status 200 "1-char password accepted (MIN_PASSWORD_LENGTH=1)" \
+  -X POST "$API/api/users" "${A[@]}" "${J[@]}" -d "{\"username\":\"shortpw_$STAMP\",\"password\":\"a\",\"role\":\"user\"}"
+status 400 "empty password still refused" \
+  -X POST "$API/api/users" "${A[@]}" "${J[@]}" -d "{\"username\":\"emptypw_$STAMP\",\"password\":\"\",\"role\":\"user\"}"
 status 400 "invalid role refused" \
   -X POST "$API/api/users" "${A[@]}" "${J[@]}" -d "{\"username\":\"role_$STAMP\",\"password\":\"$PW\",\"role\":\"superuser\"}"
 status 400 "admin cannot deactivate THEMSELVES" \
@@ -204,6 +209,9 @@ AFTER=$(curl -s "$API/api/images/$IID/annotations" "${A[@]}" | jq -r 'length')
 hdr "Cleanup"
 curl -s -X DELETE "$API/api/projects/$PID" "${A[@]}" >/dev/null
 for id in "$AU_ID" "$OU_ID"; do curl -s -X DELETE "$API/api/users/$id" "${A[@]}" >/dev/null; done
+# The password-policy checks above create an extra account; deactivate it too.
+SHORT_ID=$(curl -s "$API/api/users" "${A[@]}" | jq -r ".[] | select(.username==\"shortpw_$STAMP\") | .id")
+[[ -n "$SHORT_ID" ]] && curl -s -X DELETE "$API/api/users/$SHORT_ID" "${A[@]}" >/dev/null
 rm -f "$IMG" "$BADF"
 echo "  test project deleted; test users deactivated"
 

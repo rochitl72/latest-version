@@ -92,11 +92,14 @@ class Settings(BaseSettings):
     ALLOW_SELF_REGISTRATION: bool = False
 
     # Shortest password the API will accept when creating an account or
-    # changing a password. Deliberately low by default to make local testing
-    # easy (e.g. "123") — see `effective_min_password_length` below, which
-    # raises this floor automatically once ENVIRONMENT=production so a weak
-    # rule chosen for a demo can't quietly ship to a real deployment.
-    MIN_PASSWORD_LENGTH: int = 3
+    # changing one. This value is authoritative: it is enforced exactly as
+    # written, in every environment. Set it to 0 to accept empty passwords.
+    #
+    # Length is the ONLY password rule in this application — there are no
+    # complexity requirements (uppercase/digit/symbol), no reuse history, and
+    # no expiry. Deliberately: this is an internal lab tool, and forced
+    # complexity rules mostly produce written-down passwords.
+    MIN_PASSWORD_LENGTH: int = 1
 
     # Signs JWTs. Generated per-process if unset, which invalidates existing
     # tokens on every restart — set it explicitly in production.
@@ -165,14 +168,6 @@ class Settings(BaseSettings):
             and self.BOOTSTRAP_ADMIN_PASSWORD == DEFAULT_PASSWORD
         )
 
-    @property
-    def effective_min_password_length(self) -> int:
-        """The floor actually enforced: MIN_PASSWORD_LENGTH, but never below 8
-        once ENVIRONMENT=production — a low bar picked for local testing
-        should never silently follow the app into a real deployment."""
-        if self.is_production:
-            return max(self.MIN_PASSWORD_LENGTH, 8)
-        return self.MIN_PASSWORD_LENGTH
 
 
 settings = Settings()
