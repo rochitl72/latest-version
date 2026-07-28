@@ -48,6 +48,8 @@ export default function ProjectList() {
   const [exporting, setExporting] = useState(false);
   const [loadError, setLoadError] = useState(null);
   const [membersFor, setMembersFor] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [actionError, setActionError] = useState(null);
   const admin = isAdmin();
   const nav = useNavigate();
   const [searchParams] = useSearchParams();
@@ -135,9 +137,33 @@ export default function ProjectList() {
   }, [projects, searchParams]);
 
   const onUpload = async (e) => {
-    if (!activeProject || !e.target.files) return;
-    await uploadImages(activeProject.id, e.target.files);
-    refreshImages(activeProject);
+    if (!activeProject || !e.target.files?.length) return;
+    const input = e.target;
+    const count = input.files.length;
+    setActionError(null);
+    setUploading(true);
+    try {
+      const saved = await uploadImages(activeProject.id, input.files);
+      await refreshImages(activeProject);
+      // The server silently skips files it rejects (wrong extension, over the
+      // size cap, not a decodable image), so a partial success is possible and
+      // must not look like a total one.
+      const got = Array.isArray(saved) ? saved.length : count;
+      if (got < count) {
+        setActionError(
+          `Uploaded ${got} of ${count}. The rest were rejected — check they are ` +
+            `images (jpg, png, bmp, webp, tif) and under the size limit.`,
+        );
+      }
+    } catch (err) {
+      // Without this the promise just rejects into the void: the user clicks
+      // Upload, picks files, and absolutely nothing happens on screen.
+      setActionError(err?.message || "Upload failed.");
+    } finally {
+      setUploading(false);
+      // Let the same file be picked again after a failure.
+      input.value = "";
+    }
   };
 
   const filtered = images.filter((img) => {
@@ -269,12 +295,16 @@ export default function ProjectList() {
                 {admin && (
                   <>
                     {activeProject.assigned_user_id ? (
-                      <label className="btn-primary">
-                        <Upload size={14} /> Upload
+                      <label
+                        className={`btn-primary ${uploading ? "is-disabled" : ""}`}
+                      >
+                        <Upload size={14} />
+                        {uploading ? "Uploading…" : "Upload"}
                         <input
                           type="file"
                           multiple
-                          accept="image/*,video/*"
+                          accept="image/*"
+                          disabled={uploading}
                           onChange={onUpload}
                           style={{ display: "none" }}
                         />
@@ -283,7 +313,7 @@ export default function ProjectList() {
                       <button
                         className="btn-primary"
                         disabled
-                        title="Assign a user to this project first (Users icon in the sidebar) — images are stored under the assigned user's folder."
+                        title="Assign a user to this project first — images are stored under the assigned user's folder."
                       >
                         <Upload size={14} /> Upload
                       </button>
@@ -305,29 +335,71 @@ export default function ProjectList() {
                     </button>
                   </>
                 )}
-                {/* Downloads: open to every member of this project, not just
-                    admin — anyone who can see the images can take them home. */}
-                <a
-                  className="btn-secondary"
-                  href={exportLabeledZipUrl(activeProject.id)}
-                  title="Images + drawn-on overlays + YOLO labels + COCO json, all in one zip"
-                >
-                  <Download size={14} /> Labeled zip
-                </a>
-                <a
-                  className="btn-secondary"
-                  href={exportCocoUrl(activeProject.id)}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <Download size={14} /> COCO JSON
-                </a>
-                <a
-                  className="btn-secondary"
-                  href={exportYoloUrl(activeProject.id)}
-                >
-                  <Download size={14} /> YOLO zip
-                </a>
+                {/* Downloads: open to the admin and to the project's assigned
+                    user — anyone who can see the images can take them home.
+
+                    These are plain <a> links because the browser must perform
+                    the download itself (it carries the auth cookie). An <a>
+                    has no `disabled` attribute, so when there is nothing to
+                    export we render an inert <span> instead. Previously these
+                    were always live: on an empty project COCO and YOLO handed
+                    you an empty file, and Labeled zip navigated the tab to a
+                    raw 400 JSON error. */}
+                {(() => {
+                  const noImages = images.length === 0;
+                  // Labeled zip defaults to only_annotated=true, so it needs
+                  // annotated work, not merely uploaded images.
+                  const annotated =
+                    (stats.in_progress || 0) +
+                    (stats.annotated || 0) +
+                    (stats.needs_review || 0) +
+                    (stats.approved || 0) +
+                    (stats.rejected || 0);
+                  const link = (href, label, disabled, why, extra = {}) =>
+                    disabled ? (
+                      <span
+                        className="btn-secondary is-disabled"
+                        aria-disabled="true"
+                        title={why}
+                        key={label}
+                      >
+                        <Download size={14} /> {label}
+                      </span>
+                    ) : (
+                      <a className="btn-secondary" href={href} key={label} {...extra}>
+                        <Download size={14} /> {label}
+                      </a>
+                    );
+                  return (
+                    <>
+                      {link(
+                        exportLabeledZipUrl(activeProject.id),
+                        "Labeled zip",
+                        annotated === 0,
+                        annotated === 0
+                          ? "Nothing to export yet — annotate at least one image first."
+                          : "Images + drawn-on overlays + YOLO labels + COCO json, all in one zip",
+                      )}
+                      {link(
+                        exportCocoUrl(activeProject.id),
+                        "COCO JSON",
+                        noImages,
+                        noImages
+                          ? "Nothing to export yet — upload images first."
+                          : "COCO annotations JSON (supports RLE masks)",
+                        { target: "_blank", rel: "noreferrer" },
+                      )}
+                      {link(
+                        exportYoloUrl(activeProject.id),
+                        "YOLO zip",
+                        noImages,
+                        noImages
+                          ? "Nothing to export yet — upload images first."
+                          : "Images + YOLO labels + data.yaml, split train/val/test",
+                      )}
+                    </>
+                  );
+                })()}
                 {admin && (
                   <button
                     className="btn-secondary"
@@ -342,13 +414,39 @@ export default function ProjectList() {
               </div>
             </div>
 
+            {/* Say WHY upload is unavailable. A title= tooltip only appears on
+                hover, so on an unassigned project the button just looked
+                inert with no explanation. */}
+            {admin && !activeProject.assigned_user_id && (
+              <p className="inline-note">
+                This project has no assigned user yet. Images are stored under
+                the assigned user's folder, so assign someone before uploading —
+                use the <Users size={13} /> icon next to the project name.
+              </p>
+            )}
+
+            {actionError && (
+              <p className="inline-note inline-note-error" role="alert">
+                {actionError}
+                <button
+                  type="button"
+                  className="btn-text"
+                  onClick={() => setActionError(null)}
+                >
+                  Dismiss
+                </button>
+              </p>
+            )}
+
             <div className="filter-bar">
               {[
                 "all",
                 "unannotated",
                 "in_progress",
+                "annotated",
                 "needs_review",
                 "approved",
+                "rejected",
               ].map((f) => (
                 <button
                   key={f}

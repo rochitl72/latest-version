@@ -1847,3 +1847,59 @@ body {
   border-color: #bbf7d0;
   color: #047857;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   DISABLED STATES — appended last so they win over the theme blocks above.
+
+   .btn-secondary:disabled was defined early on, but .btn-primary had no
+   disabled rule at all. A disabled primary button therefore rendered at full
+   opacity and looked completely clickable, while the browser silently
+   swallowed every click — which is exactly how the Upload button behaved on
+   a project with no assigned user.
+
+   `.is-disabled` covers the elements that cannot take the real :disabled
+   attribute: <label> (our file-input trigger) and <a>/<span> (download links).
+   ═══════════════════════════════════════════════════════════════════════ */
+.btn-primary:disabled,
+.btn-primary.is-disabled,
+.btn-secondary.is-disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;   /* an <a> ignores :disabled; this actually blocks it */
+}
+
+/* Don't let hover brighten something the user cannot press. */
+.btn-primary:disabled:hover,
+.btn-primary.is-disabled:hover,
+.btn-secondary.is-disabled:hover {
+  filter: none;
+  background: inherit;
+}
+
+/* Keep the tooltip reachable: pointer-events:none on the control itself would
+   also kill its title=, so the wrapper stays interactive for hover. */
+.actions span.is-disabled { pointer-events: auto; }
+.actions span.is-disabled > * { pointer-events: none; }
+
+/* ── Inline explanations under the project header ─────────────────── */
+.inline-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 0 0 12px;
+  padding: 9px 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.inline-note svg { vertical-align: -2px; }
+.inline-note-error {
+  color: #8a2b2b;
+  background: #fdf0f0;
+  border-color: #f2c9c9;
+}
+.inline-note-error .btn-text { margin-left: auto; color: #8a2b2b; }
