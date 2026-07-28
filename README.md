@@ -63,7 +63,7 @@ them back.
 ## Repository layout
 
 ```
-lable-studio-latest-org/
+latest-version/
 ├── backend/                     # FastAPI application
 │   ├── app/
 │   │   ├── main.py              # app entrypoint + router registration
@@ -125,8 +125,8 @@ API, and the web UI together.
 
 ```bash
 # 1. clone
-git clone https://github.com/rochitl72/lable-studio-latest-org.git
-cd lable-studio-latest-org
+git clone https://github.com/rochitl72/latest-version.git
+cd latest-version
 
 # 2. create your secrets file
 cp .env.example .env
@@ -236,8 +236,8 @@ sudo usermod -aG docker "$USER"      # log out/in so this applies
 ### 2. Get the code and configure secrets
 
 ```bash
-git clone https://github.com/rochitl72/lable-studio-latest-org.git
-cd lable-studio-latest-org
+git clone https://github.com/rochitl72/latest-version.git
+cd latest-version
 cp .env.example .env
 nano .env
 ```
@@ -289,7 +289,7 @@ auth cookie is only sent over HTTPS.
 ### 5. Updating a deployed instance
 
 ```bash
-cd lable-studio-latest-org
+cd latest-version
 git pull
 docker compose up -d --build      # schema self-migrates on boot
 ```
