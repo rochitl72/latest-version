@@ -11,7 +11,7 @@ Note: /overview and /review-queue are the two the UI currently renders.
 `frontend/src/lib/api/client.js`, but no component displays them yet.
 """
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -22,7 +22,7 @@ from app.core.config import settings
 from app.core.security import current_user, require_admin
 from app.db.database import get_db
 from app.models import (
-    Action, ActivityLog, Annotation, Image, Project, User, utcnow,
+    Action, ActivityLog, Annotation, Image, Project, Role, User, utcnow,
 )
 from app.services import activity
 from app.services.metrics import iou_matrix, pairwise_agreement
@@ -80,15 +80,37 @@ async def overview(
         aq = aq.join(Image, Annotation.image_id == Image.id).where(
             Image.project_id == project_id
         )
+        # "Active users" must follow the project filter too. It previously
+        # counted every active account in the system even when a single
+        # project was selected, so the card never changed with the dropdown.
+        # Under one-user-per-project this is the assignee (0 or 1) plus the
+        # admins, who can reach every project.
+        uq = uq.where(
+            (User.role == Role.ADMIN)
+            | (
+                User.id
+                == select(Project.assigned_user_id)
+                .where(Project.id == project_id)
+                .scalar_subquery()
+            )
+        )
 
     # Throughput over the last 7 days → naive ETA.
+    #
+    # Counted as DISTINCT images, not raw approve events. The audit log is
+    # append-only, so approving an image, un-approving it and approving it
+    # again writes three rows; counting those made the card read "2 approved"
+    # while the status breakdown right below it showed 1, which looks broken.
+    # Distinct images keeps this consistent with by_status and is still a fair
+    # measure of review throughput.
     week_ago = utcnow() - timedelta(days=7)
     recent_q = (
-        select(func.count())
+        select(func.count(func.distinct(ActivityLog.image_id)))
         .select_from(ActivityLog)
         .where(
             ActivityLog.action == Action.REVIEW_APPROVE,
             ActivityLog.created_at >= week_ago,
+            ActivityLog.image_id.isnot(None),
         )
     )
     if project_id:
@@ -178,20 +200,28 @@ async def contributors(
             )
         total_ann = await db.scalar(aq) or 0
 
-        recent = (
-            await db.execute(
-                select(ActivityLog).where(
-                    ActivityLog.user_id == u.id,
-                    ActivityLog.created_at >= week_ago,
-                )
+        # Today / this-week counts must come from the SAME source as the total,
+        # otherwise the row contradicts itself. They used to be read from the
+        # append-only activity log while the total counted live rows, so an
+        # annotation that was created and then deleted showed up as
+        # "total 0, today 1" — impossible on its face.
+        #
+        # Counting live annotations by created_at guarantees
+        # total >= this_week >= today.
+        day_start = datetime.combine(today, time.min, tzinfo=timezone.utc)
+
+        def _since(ts):
+            sq = select(func.count()).select_from(Annotation).where(
+                Annotation.created_by == u.id, Annotation.created_at >= ts
             )
-        ).scalars().all()
-        today_count = sum(
-            1 for r in recent
-            if r.action == Action.ANNOTATION_CREATE
-            and _aware(r.created_at) and _aware(r.created_at).date() == today
-        )
-        week_count = sum(1 for r in recent if r.action == Action.ANNOTATION_CREATE)
+            if project_id:
+                sq = sq.join(Image, Annotation.image_id == Image.id).where(
+                    Image.project_id == project_id
+                )
+            return sq
+
+        today_count = await db.scalar(_since(day_start)) or 0
+        week_count = await db.scalar(_since(week_ago)) or 0
 
         assigned = await db.scalar(
             select(func.count()).select_from(Image).where(

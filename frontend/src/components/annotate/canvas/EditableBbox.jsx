@@ -30,18 +30,56 @@ export default function EditableBbox({
   // Track drag state to compute new dims live
   const startRef = useRef(null);
 
+  // Pixels → normalized. Deliberately does NOT clamp the position.
+  //
+  // It used to clamp x/y into [0,1], and that broke dragging: onDragMove wrote
+  // the clamped value straight back to state, React re-rendered the Rect at
+  // that clamped position while Konva was still dragging it, and from then on
+  // the shape sat at a fixed offset from the cursor for the rest of the drag.
+  // The bound was wrong too — clamping the ORIGIN to 1.0 ignores the box's own
+  // width, so a box could end up almost entirely off the image.
+  //
+  // Containment is now enforced by dragBoundFunc below (for moves) and by
+  // clampBox (for resizes), both of which keep the node and the pointer in
+  // agreement.
   const normalize = (px, py, pw, ph) => ({
-    x: Math.max(0, Math.min(1, px / imageWidth)),
-    y: Math.max(0, Math.min(1, py / imageHeight)),
+    x: px / imageWidth,
+    y: py / imageHeight,
     w: Math.max(0.001, Math.min(1, pw / imageWidth)),
     h: Math.max(0.001, Math.min(1, ph / imageHeight)),
   });
 
+  /** Keep the WHOLE box inside the image (used by the resize path). */
+  const clampBox = (px, py, pw, ph) => {
+    const cw = Math.max(4, Math.min(imageWidth, pw));
+    const ch = Math.max(4, Math.min(imageHeight, ph));
+    return {
+      px: Math.max(0, Math.min(imageWidth - cw, px)),
+      py: Math.max(0, Math.min(imageHeight - ch, py)),
+      pw: cw,
+      ph: ch,
+    };
+  };
+
+  // Konva calls this during a drag with the proposed ABSOLUTE (stage) position
+  // and uses whatever we return, so the node can never leave the image and the
+  // pointer stays locked to it. Converting through the parent's absolute
+  // transform makes it correct at any zoom or pan offset.
+  //
+  // Must be a normal function: Konva binds `this` to the dragged node.
+  function dragBoundFunc(pos) {
+    const parent = this.getParent();
+    if (!parent) return pos;
+    const toLocal = parent.getAbsoluteTransform().copy().invert();
+    const local = toLocal.point(pos);
+    const cx = Math.max(0, Math.min(imageWidth - w, local.x));
+    const cy = Math.max(0, Math.min(imageHeight - h, local.y));
+    return parent.getAbsoluteTransform().point({ x: cx, y: cy });
+  }
+
   const handleBodyDrag = (e) => {
     const node = e.target;
-    const nx = node.x();
-    const ny = node.y();
-    onChange(normalize(nx, ny, w, h));
+    onChange(normalize(node.x(), node.y(), w, h));
   };
   const handleBodyDragEnd = (e) => {
     const node = e.target;
@@ -92,10 +130,9 @@ export default function EditableBbox({
         nh = py - y;
         break;
     }
-    // Prevent flip
-    if (nw < 4) nw = 4;
-    if (nh < 4) nh = 4;
-    const g2 = normalize(nx, ny, nw, nh);
+    // Prevent flip, and keep the resized box inside the image.
+    const c = clampBox(nx, ny, nw, nh);
+    const g2 = normalize(c.px, c.py, c.pw, c.ph);
     if (commit) onChangeEnd(g2);
     else onChange(g2);
   };
@@ -115,6 +152,7 @@ export default function EditableBbox({
         strokeWidth={strokeW}
         fill={fill}
         draggable={selected}
+        dragBoundFunc={dragBoundFunc}
         onDragMove={handleBodyDrag}
         onDragEnd={handleBodyDragEnd}
         dash={selected ? [8 / scale, 4 / scale] : undefined}
