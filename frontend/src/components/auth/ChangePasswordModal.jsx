@@ -20,13 +20,9 @@ export default function ChangePasswordModal({ forced = false, onClose, onDone })
   const submit = async (e) => {
     e.preventDefault();
     setError("");
-    // The real minimum is enforced server-side (configurable via
-    // MIN_PASSWORD_LENGTH) — we only guard against an empty field here and let
-    // the API's error message report the actual required length if it's short.
-    if (next.length === 0) {
-      setError("Enter a new password.");
-      return;
-    }
+    // No password rules — the server accepts any string, including an empty
+    // one, so nothing is validated here. The confirm-match check below is not
+    // a policy: it only catches a typo in a field the user cannot read back.
     if (next !== confirm) {
       setError("New passwords do not match.");
       return;

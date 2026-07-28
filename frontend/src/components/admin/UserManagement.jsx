@@ -67,7 +67,7 @@ function CreateUserForm({ onCreated }) {
         <input placeholder="Username" value={form.username} onChange={set("username")} required />
         <input placeholder="Full name" value={form.full_name} onChange={set("full_name")} />
         <input placeholder="Email" type="email" value={form.email} onChange={set("email")} />
-        <input placeholder="Password" type="password" value={form.password} onChange={set("password")} required />
+        <input placeholder="Password" type="password" value={form.password} onChange={set("password")} />
         <select value={form.role} onChange={set("role")}>
           {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
         </select>

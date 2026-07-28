@@ -65,11 +65,8 @@ async def create_user_row(
     username = username.strip()
     if not username:
         raise HTTPException(400, "Username is required")
-    if len(password) < settings.MIN_PASSWORD_LENGTH:
-        raise HTTPException(
-            400,
-            f"Password must be at least {settings.MIN_PASSWORD_LENGTH} characters",
-        )
+    # No password rules by design: no minimum length, no complexity, no reuse
+    # or expiry checks. Any string is accepted, including an empty one.
     if role not in Role.ALL:
         raise HTTPException(400, f"Invalid role. Use one of: {', '.join(Role.ALL)}")
 
@@ -161,11 +158,7 @@ async def update_user(
         user.full_name = payload.full_name.strip()
         changes["full_name"] = user.full_name
     if payload.password is not None:
-        if len(payload.password) < settings.MIN_PASSWORD_LENGTH:
-            raise HTTPException(
-                400,
-                f"Password must be at least {settings.MIN_PASSWORD_LENGTH} characters",
-            )
+        # Accepted as-is — see create_user_row: there are no password rules.
         user.password_hash = hash_password(payload.password)
         changes["password"] = "reset"
 

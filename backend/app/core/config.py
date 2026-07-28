@@ -91,15 +91,10 @@ class Settings(BaseSettings):
     # an admin can create accounts.
     ALLOW_SELF_REGISTRATION: bool = False
 
-    # Shortest password the API will accept when creating an account or
-    # changing one. This value is authoritative: it is enforced exactly as
-    # written, in every environment. Set it to 0 to accept empty passwords.
-    #
-    # Length is the ONLY password rule in this application — there are no
-    # complexity requirements (uppercase/digit/symbol), no reuse history, and
-    # no expiry. Deliberately: this is an internal lab tool, and forced
-    # complexity rules mostly produce written-down passwords.
-    MIN_PASSWORD_LENGTH: int = 1
+    # NOTE: there are deliberately NO password rules in this application —
+    # no minimum length, no complexity, no reuse history, no expiry. Any
+    # string is accepted, including an empty one. Account security rests on
+    # the admin choosing sensible passwords.
 
     # Signs JWTs. Generated per-process if unset, which invalidates existing
     # tokens on every restart — set it explicitly in production.

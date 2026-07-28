@@ -134,12 +134,7 @@ async def change_password(
     if not verify_password(payload.current_password, user.password_hash):
         await asyncio.sleep(0.5)
         raise HTTPException(400, "Current password is incorrect")
-    if len(payload.new_password) < settings.MIN_PASSWORD_LENGTH:
-        raise HTTPException(
-            400,
-            f"New password must be at least {settings.MIN_PASSWORD_LENGTH} characters",
-        )
-
+    # No rules on the new password — any string is accepted.
     user.password_hash = hash_password(payload.new_password)
     user.must_change_password = False
     await activity.record(db, user, Action.USER_UPDATE, details={"self": "password"})
