@@ -4,7 +4,7 @@
 
 import { useEffect, useState } from "react";
 import { Outlet, Link } from "react-router-dom";
-import { Home, LayoutDashboard, Users, Activity, KeyRound, LogOut } from "lucide-react";
+import { Home, LayoutDashboard, Users, Activity, KeyRound, LogOut, HardDrive } from "lucide-react";
 import ApiStatusBanner from "./components/common/ApiStatusBanner";
 import LoginPage from "./components/auth/LoginPage";
 import ChangePasswordModal from "./components/auth/ChangePasswordModal";
@@ -83,6 +83,7 @@ export default function App() {
               <Link to="/admin" className="btn-text"><LayoutDashboard className="nav-ico" size={15} /> Dashboard</Link>
               <Link to="/admin/users" className="btn-text"><Users className="nav-ico" size={15} /> Users</Link>
               <Link to="/admin/activity" className="btn-text"><Activity className="nav-ico" size={15} /> Activity</Link>
+              <Link to="/admin/system" className="btn-text"><HardDrive className="nav-ico" size={15} /> System</Link>
             </>
           ) : (
             <Link to="/me" className="btn-text"><Activity className="nav-ico" size={15} /> My progress</Link>

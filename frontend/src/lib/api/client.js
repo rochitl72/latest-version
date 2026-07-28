@@ -271,3 +271,14 @@ export const listActivity = (params = {}) => {
   return req(`/activity${q ? `?${q}` : ""}`);
 };
 export const userActivity = (userId) => req(`/activity/users/${userId}`);
+
+// ─── System & Storage (admin) ────────────────────────────────────────
+// Read-only inspector: database facts, per-user disk usage, and a DB-vs-disk
+// consistency check. See backend app/api/admin/system.py.
+export const systemOverview = () => req("/system/overview");
+export const systemStorage = () => req("/system/storage");
+export const systemIntegrity = () => req("/system/integrity");
+
+// CSV downloads. Opened as <a href> so the browser saves the file, which means
+// they authenticate with the login cookie rather than a bearer header.
+export const csvUrl = (name) => `${BASE}/system/export/${name}.csv`;

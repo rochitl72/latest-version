@@ -15,7 +15,7 @@ from app.db.database import init_db
 from app.api.auth import auth, users
 from app.api.workspace import projects, images, annotations
 from app.api.dataset import versions, splits, workflow, export
-from app.api.admin import dashboard, activity
+from app.api.admin import dashboard, activity, system
 
 logging.basicConfig(
     level=logging.INFO,
@@ -97,6 +97,7 @@ protected = [
     users.router,
     activity.router,
     dashboard.router,
+    system.router,
 ]
 for router in protected:
     app.include_router(router, dependencies=[Depends(current_user)])

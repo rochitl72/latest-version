@@ -11,6 +11,7 @@ import AnnotateView from "./components/annotate/AnnotateView";
 import AdminDashboard from "./components/admin/AdminDashboard";
 import UserManagement from "./components/admin/UserManagement";
 import ActivityFeed from "./components/admin/ActivityFeed";
+import SystemPanel from "./components/admin/SystemPanel";
 import MyProgress from "./components/home/MyProgress";
 import { isAdmin } from "./lib/auth";
 import "./styles.css";
@@ -36,6 +37,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
           <Route path="admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
           <Route path="admin/users" element={<AdminRoute><UserManagement /></AdminRoute>} />
           <Route path="admin/activity" element={<AdminRoute><ActivityFeed /></AdminRoute>} />
+          <Route path="admin/system" element={<AdminRoute><SystemPanel /></AdminRoute>} />
         </Route>
       </Routes>
     </BrowserRouter>
