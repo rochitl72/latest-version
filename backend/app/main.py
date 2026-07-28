@@ -48,7 +48,7 @@ def _warn_about_insecure_config() -> None:
             "The bootstrap admin still uses the built-in default password. "
             "Sign in and change it, or set BOOTSTRAP_ADMIN_PASSWORD."
         )
-    if not os.environ.get("SECRET_KEY"):
+    if settings.secret_key_was_generated:
         log.warning(
             "SECRET_KEY not set — generated a random one. Logins will not "
             "survive a restart. Set it explicitly in production."

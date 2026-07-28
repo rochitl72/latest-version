@@ -6,6 +6,7 @@ name, or by a `.env` file next to the backend folder. See `.env.example`.
 import secrets
 from pathlib import Path
 
+from pydantic import PrivateAttr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Credentials the app ships with. Fine for a local demo, unsafe on a network —
@@ -26,6 +27,13 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
+
+    # True when no SECRET_KEY was supplied and we invented a throwaway one.
+    # Startup reads this to decide whether to warn. It must be a real flag:
+    # checking os.environ would be wrong, because pydantic-settings loads a
+    # .env file into this object WITHOUT touching the process environment, so
+    # a key set in backend/.env looks absent to os.environ.get("SECRET_KEY").
+    _secret_key_generated: bool = PrivateAttr(default=False)
 
     # ─── Paths ───────────────────────────────────────────────────────
     BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent
@@ -136,6 +144,7 @@ class Settings(BaseSettings):
                 )
             # Development only: a throwaway key, regenerated each start.
             self.SECRET_KEY = secrets.token_urlsafe(32)
+            self._secret_key_generated = True
         if self.is_production and self.using_default_credentials:
             raise RuntimeError(
                 "The built-in bootstrap admin password is still in use with "
@@ -146,6 +155,11 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.ENVIRONMENT.strip().lower() == "production"
+
+    @property
+    def secret_key_was_generated(self) -> bool:
+        """True if we invented the signing key because none was configured."""
+        return self._secret_key_generated
 
     @property
     def sync_database_url(self) -> str:
