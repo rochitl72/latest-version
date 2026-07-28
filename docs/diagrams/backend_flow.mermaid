@@ -1,0 +1,40 @@
+flowchart TB
+  subgraph CLIENT["Browser - React SPA"]
+    UI["UI components<br/>annotate | dashboard | users | progress"]
+    EDIT["editor store<br/>in-memory annotations + selection"]
+    HIST["history store<br/>undo/redo + the ONLY place edits hit the API"]
+  end
+
+  subgraph BACKEND["FastAPI backend (Python)"]
+    SEC["core/security<br/>decode JWT | current_user | require_admin"]
+    MEMB["services/membership<br/>admin, or the project's assigned user?"]
+    subgraph ROUTERS["api routers, grouped by domain"]
+      A["auth/<br/>login · logout · me · users"]
+      W["workspace/<br/>projects · images · annotations"]
+      D["dataset/<br/>versions · splits · workflow · export"]
+      M["admin/<br/>dashboard · activity feed"]
+    end
+    ACT["services/activity<br/>writes one audit row per mutation"]
+    STO["services/storage<br/>per-user file tree + JSON backups"]
+    MET["services/metrics + export<br/>IoU, COCO/YOLO writers"]
+  end
+
+  PG[("PostgreSQL<br/>users, projects(assigned_user_id), labels,<br/>versions, images(meta), annotations,<br/>activity_log")]
+  FS[("Server disk<br/>users/{uid}_{name}/projects/{pid}_{name}/<br/>images · annotations · exports")]
+
+  UI --> EDIT
+  EDIT --> HIST
+  UI -->|"reads: GET /api/..."| SEC
+  HIST -->|"writes: POST/PATCH/DELETE /api/annotations"| SEC
+  SEC --> ROUTERS
+  ROUTERS --> MEMB
+  ROUTERS --> ACT
+  ROUTERS --> PG
+  MEMB --> PG
+  ACT --> PG
+  ACT --> STO
+  M --> MET
+  MET --> PG
+  W --> STO
+  D --> STO
+  STO -->|"image bytes · annotations.json · export bundles"| FS

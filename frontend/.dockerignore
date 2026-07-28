@@ -1,0 +1,7 @@
+# The build stage runs `npm ci` itself, so never copy these into the context.
+node_modules/
+dist/
+.vite/
+vite.config.js.timestamp-*.mjs
+.DS_Store
+npm-debug.log*

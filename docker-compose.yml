@@ -1,0 +1,77 @@
+# ─────────────────────────────────────────────────────────────────────
+# RBG Annotation Studio — full-stack deployment
+#
+#   1. cp .env.example .env      and edit the secrets
+#   2. docker compose up -d --build
+#   3. open http://localhost:8080
+#
+# Services:
+#   postgres  — the database (data persisted in the pgdata volume)
+#   backend   — FastAPI API (uploaded images persisted in the storage volume)
+#   frontend  — nginx serving the built SPA and proxying /api + /ws to backend
+# ─────────────────────────────────────────────────────────────────────
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: rbg-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-annoforge}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-annoforge}
+      POSTGRES_DB: ${POSTGRES_DB:-annoforge}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # The backend waits for this to pass before it starts (see depends_on).
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-annoforge} -d ${POSTGRES_DB:-annoforge}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    container_name: rbg-backend
+    restart: unless-stopped
+    environment:
+      ENVIRONMENT: production
+      # In production the app refuses to boot without these — set them in .env.
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-admin}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:?set BOOTSTRAP_ADMIN_PASSWORD in .env}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin@example.com}
+      SEED_TEST_USER: ${SEED_TEST_USER:-false}
+      # Database — point at the postgres service by its container name.
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-annoforge}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-annoforge}
+      POSTGRES_DB: ${POSTGRES_DB:-annoforge}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    volumes:
+      - storage:/data/storage
+      - exports:/data/exports
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Not published to the host: only the frontend (nginx) reaches it over the
+    # internal compose network. Uncomment to hit the API directly for debugging.
+    # ports:
+    #   - "8000:8000"
+
+  frontend:
+    build: ./frontend
+    container_name: rbg-frontend
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      # Wait for the API's healthcheck, not just for the container to exist.
+      # nginx resolves the `backend` hostname when it starts; if it comes up
+      # first, the very first page load 502s.
+      backend:
+        condition: service_healthy
+
+volumes:
+  pgdata:     # database files
+  storage:    # uploaded images
+  exports:    # generated dataset exports

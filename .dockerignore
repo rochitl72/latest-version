@@ -1,0 +1,11 @@
+# Repo-root build context ignore (each service also has its own .dockerignore).
+.git/
+docs/
+scripts/
+**/.venv/
+**/node_modules/
+**/dist/
+**/__pycache__/
+**/*.db
+**/.env
+**/.DS_Store

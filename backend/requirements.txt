@@ -1,0 +1,31 @@
+# ─── Web API ─────────────────────────────────────────────────
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+python-multipart==0.0.12
+pydantic==2.9.2
+pydantic-settings==2.5.2
+
+# ─── Database (PostgreSQL only) ──────────────────────────────
+sqlalchemy==2.0.35
+greenlet>=3.0.0
+asyncpg==0.29.0          # async driver used by the app at runtime
+psycopg2-binary==2.9.9   # sync driver used by Alembic migrations
+alembic==1.13.3
+
+# ─── Image processing ────────────────────────────────────────
+Pillow==10.4.0
+numpy==1.26.4
+opencv-python-headless==4.10.0.84
+
+# ─── Auth ────────────────────────────────────────────────────
+python-jose[cryptography]==3.3.0
+# bcrypt is used directly rather than through passlib: passlib 1.7.4 reads
+# bcrypt.__about__.__version__, removed in bcrypt 4.1, so the pair raises on
+# first use. Talking to bcrypt directly avoids pinning it to an old release.
+bcrypt>=4.0.0
+
+# ─── Export formats ──────────────────────────────────────────
+# COCO RLE mask encoding. Optional at runtime: services/export/rle_utils.py
+# guards the import and falls back to a pure-numpy encoder, so the app still
+# starts and exports correctly if the wheel fails to build.
+pycocotools>=2.0.8

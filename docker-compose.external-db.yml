@@ -1,0 +1,88 @@
+# ─────────────────────────────────────────────────────────────────────
+# RBG Annotation Studio — deployment against an EXISTING PostgreSQL server
+# (no database container is started here).
+#
+# Use this instead of docker-compose.yml when Postgres already runs
+# somewhere else — a managed cloud database, a shared on-prem server, another
+# VM — and you want this stack to connect to it rather than spin up its own.
+#
+# The frontend is also built to call the backend by an absolute URL
+# (VITE_API_BASE_URL) instead of relying on nginx to reverse-proxy /api to a
+# backend container on the same Docker network. That's what makes the two
+# containers independently reachable: point the frontend straight at
+# wherever the backend is actually listening (this host's IP/domain).
+#
+#   1. cp .env.external-db.example .env
+#   2. edit .env — REQUIRED: DATABASE_URL (or the POSTGRES_* pieces),
+#      SECRET_KEY, BOOTSTRAP_ADMIN_PASSWORD, PUBLIC_BACKEND_URL
+#   3. docker compose -f docker-compose.external-db.yml up -d --build
+#   4. open http://<this-host>:${WEB_PORT:-8080}
+#
+# Services:
+#   backend   — FastAPI API, connects out to your existing Postgres
+#   frontend  — nginx serving the built SPA (built to call the backend at
+#               PUBLIC_BACKEND_URL directly, not via a same-container proxy)
+# ─────────────────────────────────────────────────────────────────────
+services:
+  backend:
+    build: ./backend
+    container_name: rbg-backend
+    restart: unless-stopped
+    environment:
+      ENVIRONMENT: production
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-admin}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:?set BOOTSTRAP_ADMIN_PASSWORD in .env}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin@example.com}
+      SEED_TEST_USER: ${SEED_TEST_USER:-false}
+
+      # ── Existing Postgres connection ──────────────────────────────
+      # Either set the one-line DATABASE_URL directly, e.g.:
+      #   DATABASE_URL=postgresql+asyncpg://user:pass@db.internal.company.com:5432/annoforge
+      # or leave it blank and set the pieces below instead — the backend
+      # assembles the URL from them if DATABASE_URL is empty.
+      DATABASE_URL: ${DATABASE_URL:-}
+      POSTGRES_HOST: ${POSTGRES_HOST:?set POSTGRES_HOST in .env to your existing server}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+
+      # The frontend calls the backend cross-origin now (see PUBLIC_BACKEND_URL
+      # below), so the backend must explicitly allow that origin.
+      CORS_ORIGINS: ${CORS_ORIGINS:?set CORS_ORIGINS in .env, e.g. ["http://your-host:8080"]}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    volumes:
+      - storage:/data/storage
+      - exports:/data/exports
+    # Published to the host: the browser calls this directly (see frontend
+    # build args below), so — unlike the bundled-Postgres compose file — this
+    # port must be reachable, not internal-only.
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Baked into the compiled JS at build time. Must be a URL the
+        # BROWSER can reach — the Docker-internal service name "backend"
+        # will NOT work here, because this runs in the user's browser, not
+        # inside the Docker network. Use this host's IP/domain + the port
+        # published above.
+        #   e.g. PUBLIC_BACKEND_URL=http://192.168.1.50:8000
+        #        PUBLIC_BACKEND_URL=https://api.example.com
+        VITE_API_BASE_URL: ${PUBLIC_BACKEND_URL:?set PUBLIC_BACKEND_URL in .env}
+    container_name: rbg-frontend
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      # Wait for the API's healthcheck (defined in backend/Dockerfile), not just
+      # for the container to exist — otherwise the first page load can 502.
+      backend:
+        condition: service_healthy
+
+volumes:
+  storage:    # uploaded images
+  exports:    # generated dataset exports

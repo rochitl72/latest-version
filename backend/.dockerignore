@@ -1,0 +1,14 @@
+# Keep the build context small and never leak local state into the image.
+.venv/
+__pycache__/
+*.py[cod]
+*.db
+*.db-journal
+.env
+storage/
+checkpoints/
+logs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.DS_Store

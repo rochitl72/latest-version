@@ -1,0 +1,38 @@
+# ─── OS / editor ─────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# ─── Secrets / local config ──────────────────────────────────
+.env
+*.env
+!.env.example
+!.env.external-db.example
+
+# ─── Python ──────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# ─── Node / frontend build ───────────────────────────────────
+node_modules/
+dist/
+.vite/
+frontend/vite.config.js.timestamp-*.mjs
+npm-debug.log*
+
+# ─── App runtime data (never commit) ─────────────────────────
+backend/*.db
+backend/*.db-journal
+backend/storage/
+backend/checkpoints/
+backend/.pids/
+logs/
+.pids/
