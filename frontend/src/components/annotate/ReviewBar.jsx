@@ -3,6 +3,7 @@
 // actions (Needs review / Approved / Rejected) are admin-only via isAdmin().
 // Changing status calls PATCH /api/images/status.
 
+import { useState } from "react";
 import { updateImageStatus } from "../../lib/api/client";
 import { isAdmin } from "../../lib/auth";
 
@@ -24,9 +25,22 @@ export default function ReviewBar({
   readOnly,
   onStatusChange,
 }) {
+  const [err, setErr] = useState(null);
+
   const setStatus = async (s) => {
-    await updateImageStatus(imageId, s);
-    onStatusChange(s);
+    setErr(null);
+    try {
+      await updateImageStatus(imageId, s);
+      onStatusChange(s);
+    } catch (e) {
+      // Review statuses (approved/rejected/needs_review) are admin-only, so a
+      // plain user clicking them gets a 403. Say so instead of doing nothing.
+      setErr(
+        e?.status === 403
+          ? "Only an admin can approve, reject or send an image for review."
+          : e?.message || "Could not update the status.",
+      );
+    }
   };
 
   return (
@@ -38,6 +52,14 @@ export default function ReviewBar({
       {readOnly && (
         <p className="review-lock">
           Approved — read-only. Set status to In progress to edit again.
+        </p>
+      )}
+      {err && (
+        <p className="panel-error" role="alert">
+          {err}
+          <button type="button" className="link-btn" onClick={() => setErr(null)}>
+            Dismiss
+          </button>
         </p>
       )}
       <div className="status-chips">

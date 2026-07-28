@@ -8,6 +8,7 @@ import { GitBranch, Plus } from "lucide-react";
 export default function VersionsPanel({ projectId, onVersionChange }) {
   const [versions, setVersions] = useState([]);
   const [name, setName] = useState("");
+  const [err, setErr] = useState(null);
 
   const refresh = async () => setVersions(await listVersions(projectId));
 
@@ -17,15 +18,33 @@ export default function VersionsPanel({ projectId, onVersionChange }) {
 
   const onCreate = async () => {
     const vname = name.trim() || `v${versions.length + 1}`;
-    await createVersion(projectId, vname);
-    setName("");
-    await refresh();
-    onVersionChange();
+    setErr(null);
+    try {
+      await createVersion(projectId, vname);
+      setName("");
+      await refresh();
+      onVersionChange();
+    } catch (e) {
+      setErr(
+        e?.status === 403
+          ? "Only an admin can create dataset versions."
+          : e?.message || "Could not create the version.",
+      );
+    }
   };
 
   const onActivate = async (vid) => {
-    await activateVersion(projectId, vid);
-    onVersionChange();
+    setErr(null);
+    try {
+      await activateVersion(projectId, vid);
+      onVersionChange();
+    } catch (e) {
+      setErr(
+        e?.status === 403
+          ? "Only an admin can switch the active version."
+          : e?.message || "Could not activate that version.",
+      );
+    }
   };
 
   return (
@@ -33,6 +52,14 @@ export default function VersionsPanel({ projectId, onVersionChange }) {
       <h4>
         <GitBranch size={14} /> Dataset versions
       </h4>
+      {err && (
+        <p className="panel-error" role="alert">
+          {err}
+          <button type="button" className="link-btn" onClick={() => setErr(null)}>
+            Dismiss
+          </button>
+        </p>
+      )}
       <div className="version-create">
         <input
           placeholder="New version name..."

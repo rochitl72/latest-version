@@ -134,6 +134,10 @@ export default function AnnotateView() {
   } = useHistory();
   const [labelName, setLabelName] = useState("");
   const [keypointTemplate, setKeypointTemplate] = useState("");
+  // Surfaces any failed API call in this view. Without it, a rejected promise
+  // disappears and the UI silently does nothing.
+  const [err, setErr] = useState(null);
+  const [showKeypointField, setShowKeypointField] = useState(false);
   const [currentImage, setCurrentImage] = useState(null);
   const [projectImages, setProjectImages] = useState([]);
   const [showGuide, setShowGuide] = useState(shouldShowOnboarding);
@@ -151,9 +155,14 @@ export default function AnnotateView() {
   }, [magnifierZoom]);
 
   const refreshProjectImages = async () => {
-    const imgs = await listImages(pid);
-    setProjectImages(imgs);
-    return imgs;
+    try {
+      const imgs = await listImages(pid);
+      setProjectImages(imgs);
+      return imgs;
+    } catch (e) {
+      setErr(e?.message || "Could not load this project's images.");
+      return [];
+    }
   };
 
   useEffect(() => {
@@ -307,27 +316,52 @@ export default function AnnotateView() {
           .map((s) => s.trim())
           .filter(Boolean)
       : null;
-    const created = await createLabel(pid, {
-      name: labelName.trim(),
-      color,
-      keypoint_names: kpNames,
-      skeleton_edges:
-        kpNames && kpNames.length > 1
-          ? kpNames.slice(0, -1).map((_, i) => [i, i + 1])
-          : null,
-    });
-    setLabels([...labels, created]);
-    setActiveLabel(created.id);
-    setLabelName("");
-    setKeypointTemplate("");
+    setErr(null);
+    try {
+      const created = await createLabel(pid, {
+        name: labelName.trim(),
+        color,
+        keypoint_names: kpNames,
+        skeleton_edges:
+          kpNames && kpNames.length > 1
+            ? kpNames.slice(0, -1).map((_, i) => [i, i + 1])
+            : null,
+      });
+      setLabels([...labels, created]);
+      setActiveLabel(created.id);
+      setLabelName("");
+      setKeypointTemplate("");
+    } catch (e) {
+      // Creating a label is admin-only. Without this the request just failed
+      // in silence and the button looked broken.
+      setErr(
+        e?.status === 403
+          ? "Only an admin can add label classes. Ask an admin to set up the classes for this project."
+          : e?.message || "Could not add the label.",
+      );
+    }
   };
 
   const onDeleteLabel = async (id) => {
-    if (!confirm("Delete this label class?")) return;
-    await deleteLabel(pid, id);
-    setLabels(labels.filter((l) => l.id !== id));
-    setAnnotations(annotations.filter((a) => a.label_id !== id));
-    if (activeLabelId === id) setActiveLabel(labels[0]?.id ?? null);
+    if (
+      !confirm(
+        "Delete this label class?\n\nEvery annotation using it will be deleted too.",
+      )
+    )
+      return;
+    setErr(null);
+    try {
+      await deleteLabel(pid, id);
+      setLabels(labels.filter((l) => l.id !== id));
+      setAnnotations(annotations.filter((a) => a.label_id !== id));
+      if (activeLabelId === id) setActiveLabel(labels[0]?.id ?? null);
+    } catch (e) {
+      setErr(
+        e?.status === 403
+          ? "Only an admin can delete label classes."
+          : e?.message || "Could not delete the label.",
+      );
+    }
   };
 
   const finishPolygon = async () => {
@@ -351,10 +385,15 @@ export default function AnnotateView() {
   };
 
   const markImageDone = async () => {
-    await updateImageStatus(iid, "annotated");
-    setImageStatus("annotated");
-    const imgs = await refreshProjectImages();
-    setCurrentImage(imgs.find((x) => x.id === iid) || null);
+    setErr(null);
+    try {
+      await updateImageStatus(iid, "annotated");
+      setImageStatus("annotated");
+      const imgs = await refreshProjectImages();
+      setCurrentImage(imgs.find((x) => x.id === iid) || null);
+    } catch (e) {
+      setErr(e?.message || "Could not update the image status.");
+    }
   };
 
   const navigateToImage = async (img) => {
@@ -479,24 +518,71 @@ export default function AnnotateView() {
 
           <section>
             <h4>Labels</h4>
+            <p className="panel-hint">
+              A label is the kind of thing you are marking — <em>car</em>,{" "}
+              <em>person</em>, <em>pothole</em>. Add one, then draw.
+            </p>
             <div className="new-label">
               <input
-                placeholder="Class name..."
+                placeholder="e.g. car"
                 value={labelName}
                 onChange={(e) => setLabelName(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && onAddLabel()}
               />
 
-              <button onClick={onAddLabel}>
+              <button onClick={onAddLabel} title="Add this label">
                 <Plus size={14} />
               </button>
             </div>
-            <input
-              className="kp-template"
-              placeholder="Keypoints: nose, left_eye, right_eye (comma-separated)"
-              value={keypointTemplate}
-              onChange={(e) => setKeypointTemplate(e.target.value)}
-            />
+
+            {/* Keypoints only matter for pose/skeleton work. Showing the field
+                to everyone made it look required — it is not, and most projects
+                (boxes, polygons, masks) never touch it. Hidden behind a toggle. */}
+            {showKeypointField ? (
+              <>
+                <input
+                  className="kp-template"
+                  placeholder="nose, left_eye, right_eye"
+                  value={keypointTemplate}
+                  onChange={(e) => setKeypointTemplate(e.target.value)}
+                />
+                <p className="panel-hint">
+                  Optional. Only for skeleton/pose labelling — names the points
+                  you will click on each object, in order.{" "}
+                  <button
+                    type="button"
+                    className="link-btn"
+                    onClick={() => {
+                      setShowKeypointField(false);
+                      setKeypointTemplate("");
+                    }}
+                  >
+                    Hide
+                  </button>
+                </p>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="link-btn"
+                onClick={() => setShowKeypointField(true)}
+              >
+                + Add keypoints (optional — for pose/skeleton only)
+              </button>
+            )}
+
+            {err && (
+              <p className="panel-error" role="alert">
+                {err}
+                <button
+                  type="button"
+                  className="link-btn"
+                  onClick={() => setErr(null)}
+                >
+                  Dismiss
+                </button>
+              </p>
+            )}
 
             <ul className="label-list">
               {labels.map((l) => (

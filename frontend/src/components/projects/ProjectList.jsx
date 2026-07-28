@@ -71,12 +71,24 @@ export default function ProjectList() {
   }, []);
 
   const refreshImages = async (p) => {
-    const [imgs, st] = await Promise.all([
-      listImages(p.id),
-      workflowStats(p.id),
-    ]);
-    setImages(imgs);
-    setStats(st.by_status || {});
+    try {
+      const [imgs, st] = await Promise.all([
+        listImages(p.id),
+        workflowStats(p.id),
+      ]);
+      setImages(imgs);
+      setStats(st.by_status || {});
+    } catch (e) {
+      // A 403 here means the project was unassigned from you while it was
+      // open. Report it rather than leaving a stale image grid on screen.
+      setImages([]);
+      setStats({});
+      setActionError(
+        e?.status === 403
+          ? "You no longer have access to this project."
+          : e?.message || "Could not load this project's images.",
+      );
+    }
   };
 
   const onCreate = async () => {
@@ -124,7 +136,8 @@ export default function ProjectList() {
   const onSelect = async (p) => {
     setActive(p);
     setSelected(new Set());
-    refreshImages(p);
+    setActionError(null);
+    await refreshImages(p);
   };
 
   // Deep-link support: "/?open=<id>" (used by the My progress page) opens that
@@ -179,9 +192,14 @@ export default function ProjectList() {
 
   const onBulkApprove = async () => {
     if (!activeProject || selected.size === 0) return;
-    await bulkUpdateStatus([...selected], "approved");
-    refreshImages(activeProject);
-    setSelected(new Set());
+    setActionError(null);
+    try {
+      await bulkUpdateStatus([...selected], "approved");
+      await refreshImages(activeProject);
+      setSelected(new Set());
+    } catch (e) {
+      setActionError(e?.message || "Could not approve the selected images.");
+    }
   };
 
   const onAutoSplit = async () => {
