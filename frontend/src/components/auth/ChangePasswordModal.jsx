@@ -1,7 +1,12 @@
 // ChangePasswordModal.jsx — dialog for changing your own password.
 // Two modes: `forced` (must replace a default/first-login password and cannot
 // be dismissed) and normal (opened voluntarily from the header). Submits to
-// POST /api/auth/change-password; the server enforces the minimum length.
+// POST /api/auth/change-password.
+//
+// There are NO password rules anywhere in this app — no minimum length, no
+// complexity, no reuse or expiry checks. Any string is accepted, including an
+// empty one. None of the inputs below are marked `required`, because the
+// browser's own check would otherwise block setting an empty password.
 
 import { useState } from "react";
 import { changePassword } from "../../lib/api/client";
@@ -56,7 +61,6 @@ export default function ChangePasswordModal({ forced = false, onClose, onDone })
               value={current}
               onChange={(e) => setCurrent(e.target.value)}
               autoFocus
-              required
             />
           </label>
           <label className="field">
@@ -65,7 +69,6 @@ export default function ChangePasswordModal({ forced = false, onClose, onDone })
               type="password"
               value={next}
               onChange={(e) => setNext(e.target.value)}
-              required
             />
           </label>
           <label className="field">
@@ -74,7 +77,6 @@ export default function ChangePasswordModal({ forced = false, onClose, onDone })
               type="password"
               value={confirm}
               onChange={(e) => setConfirm(e.target.value)}
-              required
             />
           </label>
           {error && <div className="form-error">{error}</div>}

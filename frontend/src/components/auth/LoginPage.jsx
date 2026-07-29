@@ -67,7 +67,10 @@ export default function LoginPage({ onSuccess }) {
               }}
               autoComplete="current-password"
               disabled={busy}
-              required
+              /* No `required` on purpose. This app has no password rules at
+                 all, so an account may legitimately have an EMPTY password —
+                 and the browser's required check would make such an account
+                 impossible to sign in to. The server decides, not the form. */
             />
           </label>
           {error && (
