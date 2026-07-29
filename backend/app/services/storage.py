@@ -200,14 +200,122 @@ def export_dir(
 ) -> Path:
     """A timestamped folder for a generated on-demand export bundle (the
     'save a zip to the server's Downloads' action), kept separate from the
-    live coco/ and yolo/ folders above, which always reflect current state."""
+    live coco/ and yolo/ folders above, which always reflect current state.
+
+    Sits at the user root (not inside project/), so an export bundle is never
+    mistaken for a project folder by anything that lists project/.
+    """
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S")
     d = (
-        project_dir(owner_id, owner_username, owner_role, project_id, project_name).parent
-        / "exports" / stamp
+        user_dir(owner_id, owner_username, owner_role)
+        / "exports" / f"{project_id}_{_safe(project_name)}" / stamp
     )
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+# ─── Orphaned data (a user was deleted, their work was kept) ─────────
+def orphan_root() -> Path:
+    """Where the projects of deleted users are kept.
+
+    Deleting an account does not destroy the labelling work done under it —
+    the project data moves here instead, one subfolder per deleted user, so
+    it stays recoverable and clearly separated from live accounts.
+    """
+    return settings.STORAGE_DIR / "orphan_projects"
+
+
+def orphan_user_dir(user_id: int, username: str) -> Path:
+    """The folder holding one deleted user's former projects."""
+    return orphan_root() / f"{user_id}_{_safe(username)}"
+
+
+def move_user_to_orphan(user_id: int, username: str, role: str) -> Path | None:
+    """Move a deleted user's whole folder into orphan_projects/.
+
+    Returns the new location, or None if they had nothing on disk. The caller
+    rewrites the affected image paths in Postgres in the same transaction, so
+    the surviving project rows still point at files that exist.
+    """
+    src = user_dir(user_id, username, role)
+    dst = orphan_user_dir(user_id, username)
+    if not src.exists():
+        return None
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists():
+        # A previous deletion of the same id+username. Keep both rather than
+        # silently overwriting someone's recoverable data.
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        dst = dst.with_name(f"{dst.name}_{stamp}")
+    shutil.move(str(src), str(dst))
+    log.info("Moved deleted user %s to orphan storage: %s -> %s", username, src, dst)
+    return dst
+
+
+# ─── Deletion ────────────────────────────────────────────────────────
+def delete_project_dirs(
+    owner_id: int, owner_username: str, owner_role: str, project_id: int, project_name: str
+) -> list[str]:
+    """Remove BOTH of a project's subtrees (images and annotation artifacts).
+
+    Returns the paths actually removed, for the audit log. Deleting a project
+    row used to leave its whole folder behind forever; this is what stops that
+    leak. Best-effort per folder: a failure to remove one must not prevent the
+    database row from being deleted, or the two would drift further apart.
+    """
+    removed = []
+    for d in (
+        project_dir(owner_id, owner_username, owner_role, project_id, project_name),
+        annotation_dir(owner_id, owner_username, owner_role, project_id, project_name),
+    ):
+        if d.exists():
+            try:
+                shutil.rmtree(d)
+                removed.append(str(d))
+            except OSError:
+                log.exception("Failed removing project folder %s", d)
+    return removed
+
+
+def delete_image_files(
+    owner_id: int, owner_username: str, owner_role: str,
+    project_id: int, project_name: str,
+    image_id: int, image_filename: str, storage_path: str | None,
+) -> list[str]:
+    """Remove everything on disk belonging to ONE image: the original file,
+    its annotations JSON, its overlay PNG, and its YOLO label file.
+
+    Deleting an image used to unlink only the original and leave its
+    annotation JSON behind as a permanent orphan — this closes that leak.
+    """
+    removed = []
+    candidates = [Path(storage_path)] if storage_path else []
+    candidates.append(
+        annotation_dir(owner_id, owner_username, owner_role, project_id, project_name)
+        / "json" / f"{image_id}.json"
+    )
+    stem = Path(image_filename).stem or "image"
+    candidates.append(
+        annotation_dir(owner_id, owner_username, owner_role, project_id, project_name)
+        / "overlays" / f"{image_id}_{_safe(stem)}.png"
+    )
+    yolo_labels = (
+        annotation_dir(owner_id, owner_username, owner_role, project_id, project_name)
+        / "yolo" / "labels"
+    )
+    if yolo_labels.is_dir():
+        for split_dir in yolo_labels.iterdir():
+            if split_dir.is_dir():
+                candidates.append(split_dir / f"{stem}.txt")
+
+    for p in candidates:
+        try:
+            if p.is_file():
+                p.unlink()
+                removed.append(str(p))
+        except OSError:
+            log.exception("Failed removing image file %s", p)
+    return removed
 
 
 # ─── Writers ─────────────────────────────────────────────────────────

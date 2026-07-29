@@ -210,6 +210,11 @@ async def _regenerate_artifacts(db, user: User, project: Project, images: list[I
 
 def _cleanup_old_dirs(user: User) -> None:
     old_user_dir = OLD_USERS_ROOT / f"{user.id}_{_safe(user.username)}"
+    # For a PLAIN user the old and new user folders are the same path
+    # (storage/users/{id}_{name}) — only the inner layout changed. Never
+    # remove it in that case, or we would delete the folder we just built.
+    new_user_dir = storage.user_dir(user.id, user.username, user.role)
+    same_dir = old_user_dir.resolve() == new_user_dir.resolve()
     old_projects_dir = old_user_dir / "projects"
     if old_projects_dir.exists():
         for p in sorted(old_projects_dir.rglob("*"), reverse=True):
@@ -223,6 +228,8 @@ def _cleanup_old_dirs(user: User) -> None:
                 old_projects_dir.rmdir()
         except OSError:
             pass
+    if same_dir:
+        return
     try:
         if old_user_dir.exists() and not any(old_user_dir.iterdir()):
             old_user_dir.rmdir()

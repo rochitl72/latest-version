@@ -290,6 +290,9 @@ class Action:
     USER_UPDATE = "user.update"
     USER_DEACTIVATE = "user.deactivate"
     USER_ACTIVATE = "user.activate"
+    # Permanent account removal. Distinct from USER_DEACTIVATE: the row is
+    # gone and their project files have moved to orphan_projects/.
+    USER_DELETE = "user.delete"
     # A project has a single assigned user now; assigning/clearing that user.
     PROJECT_ASSIGN = "project.assign"
     PROJECT_UNASSIGN = "project.unassign"

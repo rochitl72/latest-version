@@ -243,9 +243,10 @@ async def system_integrity(
       * a file exists that no row references    → wasted disk, grows forever
       * annotations_path set but the file is gone
 
-    Deleting an image currently leaves its annotations JSON behind, and
-    deleting a project leaves its whole folder, so orphans accumulate. This
-    endpoint is what makes that visible.
+    Derived artifacts (overlays, coco, yolo, logs, exports) and the retained
+    data of deleted users (orphan_projects/) are unreferenced by design and
+    are excluded — otherwise they would swamp the result and hide a real
+    problem, which is exactly what happened when .DS_Store was counted.
     """
     images = (await db.execute(select(Image).order_by(Image.id))).scalars().all()
 
@@ -271,11 +272,24 @@ async def system_integrity(
                     "path": img.annotations_path,
                 })
 
-    # Files on disk that nothing in the database points at. activity.log and
-    # export bundles are expected to be unreferenced, so they are excluded.
+    # Files on disk that nothing in the database points at.
+    #
+    # Plenty of files are unreferenced BY DESIGN and must not be reported:
+    #   overlays/ coco/ yolo/ logs/ — artifacts derived from the annotations,
+    #                                 rewritten on every save; no DB column
+    #                                 points at them
+    #   exports/                    — generated bundles
+    #   activity.log                — the plain-text action mirror
+    #   orphan_projects/            — deliberately retained data from deleted
+    #                                 accounts; the whole point is that it
+    #                                 outlives the rows that referenced it
+    # Only `json/` under annotation/ is genuinely tracked (images.annotations_path),
+    # so that is the one annotation subfolder left in scope.
+    _DERIVED_DIRS = {"overlays", "coco", "yolo", "logs", "exports"}
     orphans = []
     orphan_bytes = 0
     root = settings.STORAGE_DIR
+    orphan_store = storage.orphan_root().name
     if root.exists():
         for p in root.rglob("*"):
             if not p.is_file():
@@ -284,7 +298,10 @@ async def system_integrity(
                 continue
             if _is_os_junk(p):
                 continue
-            if "exports" in p.parts:
+            parts = set(p.parts)
+            if parts & _DERIVED_DIRS:
+                continue
+            if orphan_store in p.parts:
                 continue
             if str(p) not in referenced:
                 try:

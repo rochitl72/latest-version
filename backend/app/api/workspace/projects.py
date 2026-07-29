@@ -128,13 +128,27 @@ async def delete_project(
     project = await db.get(Project, project_id)
     if not project:
         raise HTTPException(404, "Project not found")
+
+    # Remove the project's files as well as its rows. Deleting a project used
+    # to drop the database rows and leave the entire folder tree on disk
+    # forever — images, annotation JSON, overlays, exports, the lot — so
+    # storage grew every time a project was removed.
+    removed = []
+    if project.assigned_user_id:
+        owner = await db.get(User, project.assigned_user_id)
+        if owner:
+            removed = storage.delete_project_dirs(
+                owner.id, owner.username, owner.role, project.id, project.name,
+            )
+
     await activity.record(
         db, user, Action.PROJECT_DELETE,
-        project_id=project.id, details={"name": project.name},
+        project_id=project.id,
+        details={"name": project.name, "removed_paths": removed},
     )
     await db.delete(project)
     await db.commit()
-    return {"ok": True}
+    return {"ok": True, "removed_paths": removed}
 
 
 # ─── Labels ──────────────────────────────────────────────────────

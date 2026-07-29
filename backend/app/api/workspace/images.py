@@ -211,7 +211,9 @@ async def upload_images(
         img_row = Image(
             project_id=project_id,
             version_id=version_id,
-            filename=file.filename or unique,
+            # `unique_hex` (not `unique`) — an upload with no filename used to
+            # raise NameError here and 500 the whole batch.
+            filename=file.filename or f"{unique_hex}{ext}",
             storage_path=str(target),
             width=w,
             height=h,
@@ -284,12 +286,32 @@ async def delete_image(
     img = await db.get(Image, image_id)
     if not img or img.project_id != project_id:
         raise HTTPException(404, "Image not found")
-    Path(img.storage_path).unlink(missing_ok=True)
+
+    # Remove every file belonging to this image, not just the original. The
+    # annotation JSON, the rendered overlay and the YOLO label file used to be
+    # left behind on delete, accumulating as permanent orphans.
+    removed = []
+    project = await db.get(Project, project_id)
+    owner = (
+        await db.get(User, project.assigned_user_id)
+        if project and project.assigned_user_id else None
+    )
+    if owner and project:
+        removed = storage.delete_image_files(
+            owner.id, owner.username, owner.role, project.id, project.name,
+            img.id, img.filename, img.storage_path,
+        )
+    elif img.storage_path:
+        # No owner to resolve the annotation folder from — at minimum, don't
+        # leave the original image file behind.
+        Path(img.storage_path).unlink(missing_ok=True)
+        removed = [img.storage_path]
+
     await activity.record(
         db, user, Action.IMAGE_DELETE,
         project_id=project_id, image_id=image_id,
-        details={"filename": img.filename},
+        details={"filename": img.filename, "removed_paths": removed},
     )
     await db.delete(img)
     await db.commit()
-    return {"ok": True}
+    return {"ok": True, "removed_paths": removed}

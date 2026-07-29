@@ -9,6 +9,8 @@ All endpoints here require the admin role. Two safety rails matter:
 `create_user_row` is shared with self-registration in `auth.py`, which is why
 it lives here as a reusable helper rather than inline in the endpoint.
 """
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -134,6 +136,9 @@ async def update_user(
         raise HTTPException(404, "User not found")
 
     changes: dict = {}
+    # Set if we physically moved this user's folder, so a failed commit can
+    # put it back (see the try/except around db.commit() at the end).
+    role_move: tuple[str, str] | None = None
 
     if payload.role is not None and payload.role != user.role:
         if payload.role not in Role.ALL:
@@ -152,6 +157,7 @@ async def update_user(
         old_prefix = str(storage.user_dir(user.id, user.username, old_role))
         new_prefix = str(storage.user_dir(user.id, user.username, new_role))
         if old_prefix != new_prefix:
+            role_move = (old_role, new_role)
             storage.move_user_role_dir(user.id, user.username, old_role, new_role)
             owned_project_ids = [
                 r[0] for r in (
@@ -202,7 +208,28 @@ async def update_user(
     await activity.record(
         db, admin, action, details={"target_user": user.username, "changes": changes}
     )
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        # The folder was already moved on disk before we got here. If the
+        # commit fails the database still has the OLD role and the OLD paths,
+        # so leaving the files in their new home would strand every image.
+        # Put them back, then let the error surface.
+        await db.rollback()
+        if role_move:
+            moved_from, moved_to = role_move
+            try:
+                storage.move_user_role_dir(
+                    user.id, user.username, moved_to, moved_from
+                )
+            except Exception:
+                logging.getLogger("annoforge.users").exception(
+                    "CRITICAL: could not restore storage folder for user %s "
+                    "after a failed role change. Disk and database disagree; "
+                    "the folder is at the %s location but the database says %s.",
+                    user.username, moved_to, moved_from,
+                )
+        raise
     await db.refresh(user)
     return user
 
@@ -242,6 +269,97 @@ async def delete_user(
     )
     await db.commit()
     return {"ok": True, "deactivated": user.username}
+
+
+@router.delete("/{user_id}/permanent")
+async def delete_user_permanently(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """PERMANENTLY delete an account and move its project data to orphan storage.
+
+    This is the destructive counterpart to the deactivate endpoint above, and
+    it is admin-only (`require_admin`). What it does, in order:
+
+      1. Refuses to delete you, or the last remaining active admin.
+      2. Moves the user's whole storage folder out of admin/ or users/ and
+         into `orphan_projects/{id}_{username}/`. The labelling work is NOT
+         destroyed — an account going away should not vaporise a dataset.
+      3. Rewrites every affected `images.storage_path` / `annotations_path`
+         to the new orphan location, so the surviving project rows still
+         point at files that exist.
+      4. Clears `assigned_user_id` on their projects, leaving the projects
+         intact but unassigned, ready for an admin to hand to someone else.
+      5. Deletes the user row. Annotations they authored elsewhere SURVIVE:
+         the `created_by` foreign key is ON DELETE SET NULL, so other
+         people's projects keep the shapes and simply lose the attribution.
+
+    Steps 2–4 happen inside one transaction with step 5, so either the whole
+    deletion lands or none of it does.
+    """
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(404, "User not found")
+    if user.id == admin.id:
+        raise HTTPException(400, "You cannot delete your own account")
+    if user.role == Role.ADMIN:
+        await _guard_last_admin(db, user)
+
+    old_prefix = str(storage.user_dir(user.id, user.username, user.role))
+    username = user.username
+
+    # Move their files aside first so we know the new prefix before rewriting
+    # any paths. If this raises, nothing has been committed and the account
+    # still exists — safe to retry.
+    new_dir = storage.move_user_to_orphan(user.id, user.username, user.role)
+    new_prefix = str(new_dir) if new_dir else None
+
+    project_ids = [
+        r[0] for r in (
+            await db.execute(
+                select(Project.id).where(Project.assigned_user_id == user.id)
+            )
+        ).all()
+    ]
+
+    if project_ids:
+        if new_prefix:
+            imgs = (
+                await db.execute(
+                    select(Image).where(Image.project_id.in_(project_ids))
+                )
+            ).scalars().all()
+            for img in imgs:
+                if img.storage_path and img.storage_path.startswith(old_prefix):
+                    img.storage_path = new_prefix + img.storage_path[len(old_prefix):]
+                if img.annotations_path and img.annotations_path.startswith(old_prefix):
+                    img.annotations_path = new_prefix + img.annotations_path[len(old_prefix):]
+
+        # Keep the projects, drop the assignment. An admin can reassign them.
+        projects = (
+            await db.execute(select(Project).where(Project.id.in_(project_ids)))
+        ).scalars().all()
+        for p in projects:
+            p.assigned_user_id = None
+
+    await activity.record(
+        db, admin, Action.USER_DELETE,
+        details={
+            "deleted_user": username,
+            "role": user.role,
+            "orphaned_projects": project_ids,
+            "storage_moved_to": new_prefix,
+        },
+    )
+    await db.delete(user)
+    await db.commit()
+    return {
+        "ok": True,
+        "deleted": username,
+        "orphaned_projects": len(project_ids),
+        "storage_moved_to": new_prefix,
+    }
 
 
 @router.get("/me/stats")

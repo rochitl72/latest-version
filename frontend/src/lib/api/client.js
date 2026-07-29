@@ -226,6 +226,12 @@ export const updateUser = (id, data) =>
   req(`/users/${id}`, { method: "PATCH", body: JSON.stringify(data) });
 export const deactivateUser = (id) =>
   req(`/users/${id}`, { method: "DELETE" });
+// PERMANENT deletion — removes the account row entirely. Their projects are
+// kept but unassigned, and their files move to storage/orphan_projects/.
+// Distinct endpoint from deactivateUser above so the destructive action can
+// never be reached by accident.
+export const deleteUserPermanently = (id) =>
+  req(`/users/${id}/permanent`, { method: "DELETE" });
 export const myStats = () => req("/users/me/stats");
 
 // ─── Account ─────────────────────────────────────────────────────────

@@ -81,12 +81,17 @@ U2_ID=$(curl -s -X POST "$API/api/users" "${AUTH[@]}" -H 'Content-Type: applicat
 [[ -n "$U1_ID" && -n "$U2_ID" ]] && ok "created users $U1 (id=$U1_ID) and $U2 (id=$U2_ID)" \
                                  || { bad "could not create users"; exit 1; }
 
+# Both test accounts are plain users, so they live under the users/ bucket.
+# (An admin account would be under admin/ instead — that split is checked in
+# step 9 below, by promoting one of them.)
 U1_DIR="$STORAGE/users/${U1_ID}_${U1}"
 U2_DIR="$STORAGE/users/${U2_ID}_${U2}"
-inb "test -d '$U1_DIR/projects'" && ok "folder exists: users/${U1_ID}_${U1}/projects" \
-                                 || bad "MISSING folder $U1_DIR/projects"
-inb "test -d '$U2_DIR/projects'" && ok "folder exists: users/${U2_ID}_${U2}/projects" \
-                                 || bad "MISSING folder $U2_DIR/projects"
+inb "test -d '$U1_DIR/project'"    && ok "folder exists: users/${U1_ID}_${U1}/project" \
+                                   || bad "MISSING folder $U1_DIR/project"
+inb "test -d '$U1_DIR/annotation'" && ok "folder exists: users/${U1_ID}_${U1}/annotation" \
+                                   || bad "MISSING folder $U1_DIR/annotation"
+inb "test -d '$U2_DIR/project'"    && ok "folder exists: users/${U2_ID}_${U2}/project" \
+                                   || bad "MISSING folder $U2_DIR/project"
 
 # ── 2. project assignment → project dirs ─────────────────────────────
 hdr "2. Assigning a project creates its folders under that user"
@@ -98,9 +103,14 @@ PNAME=$(echo "$PROJ" | jq -r '.name')
 
 curl -s -X PUT "$API/api/projects/$PID/assignee" "${AUTH[@]}" -H 'Content-Type: application/json' \
      -d "{\"user_id\":$U1_ID}" >/dev/null
-P1_DIR="$U1_DIR/projects/${PID}_VerifyProj$STAMP"
-inb "test -d '$P1_DIR/images'"      && ok "images/ created under the assignee"      || bad "MISSING $P1_DIR/images"
-inb "test -d '$P1_DIR/annotations'" && ok "annotations/ created under the assignee" || bad "MISSING $P1_DIR/annotations"
+P1_DIR="$U1_DIR/project/${PID}_VerifyProj$STAMP"
+A1_DIR="$U1_DIR/annotation/${PID}_VerifyProj$STAMP"
+inb "test -d '$P1_DIR/images'" && ok "project/{proj}/images created under the assignee" \
+                               || bad "MISSING $P1_DIR/images"
+for sub in json overlays coco yolo logs; do
+  inb "test -d '$A1_DIR/$sub'" && ok "annotation/{proj}/$sub created" \
+                               || bad "MISSING $A1_DIR/$sub"
+done
 
 # ── 3+4. upload → file on disk, path in Postgres ─────────────────────
 hdr "3+4. Uploaded image lands under the assignee; Postgres stores the path"
@@ -129,8 +139,9 @@ case "$DB_PATH" in
   *) bad "path is NOT under $P1_DIR/images" ;;
 esac
 inb "test -f '$DB_PATH'" && ok "the file really exists at that path" || bad "no file at $DB_PATH"
-echo "$DB_PATH" | grep -qE '/images/[0-9a-f]{2}/[0-9a-f]{32}\.' \
-  && ok "sharded as images/{xx}/{uuid}.ext" || bad "not in the sharded {xx}/{uuid} layout"
+# Images now sit DIRECTLY in images/ — no {xx} shard subdirectory.
+echo "$DB_PATH" | grep -qE '/images/[0-9a-f]{32}\.' \
+  && ok "stored flat as images/{uuid}.ext" || bad "not in the flat images/{uuid} layout"
 
 # ── 5+6. annotation → Postgres AND json mirror ───────────────────────
 hdr "5+6. Annotation goes to Postgres AND is mirrored to annotations/{id}.json"
@@ -150,11 +161,22 @@ info "images.annotations_path = $ANN_PATH"
 [[ -n "$ANN_PATH" ]] && ok "annotations_path is set" || bad "annotations_path is NULL"
 inb "test -f '$ANN_PATH'" && ok "the JSON backup exists on disk" || bad "no JSON backup at $ANN_PATH"
 case "$ANN_PATH" in
-  "$P1_DIR"/annotations/*) ok "JSON sits under the assignee's annotations/ folder" ;;
-  *) bad "JSON is NOT under $P1_DIR/annotations" ;;
+  "$A1_DIR"/json/*) ok "JSON sits under annotation/{proj}/json/" ;;
+  *) bad "JSON is NOT under $A1_DIR/json" ;;
 esac
 inb "cat '$ANN_PATH'" | jq -e ".annotations[0].id == $ANN_ID" >/dev/null \
   && ok "JSON content matches the Postgres row" || bad "JSON does not contain annotation $ANN_ID"
+
+# The other artifacts written on every annotation save.
+inb "ls '$A1_DIR/overlays' | grep -q ." \
+  && ok "overlay PNG was rendered into annotation/{proj}/overlays/" \
+  || bad "no overlay image in $A1_DIR/overlays"
+inb "test -f '$A1_DIR/coco/annotations_coco.json'" \
+  && ok "live COCO export written" || bad "MISSING $A1_DIR/coco/annotations_coco.json"
+inb "ls '$A1_DIR/yolo/labels' | grep -q ." \
+  && ok "live YOLO labels written" || bad "no YOLO labels in $A1_DIR/yolo/labels"
+inb "test -f '$A1_DIR/logs/activity.log'" \
+  && ok "project-scoped log written" || bad "MISSING $A1_DIR/logs/activity.log"
 
 # ── 7. activity.log ──────────────────────────────────────────────────
 hdr "7. Actions are mirrored to the acting user's activity.log"
@@ -171,10 +193,13 @@ inb "tail -3 '$ADMIN_LOG'" | sed 's/^/       /'
 hdr "8. Reassigning the project MOVES the files and rewrites the DB paths"
 curl -s -X PUT "$API/api/projects/$PID/assignee" "${AUTH[@]}" -H 'Content-Type: application/json' \
      -d "{\"user_id\":$U2_ID}" >/dev/null
-P2_DIR="$U2_DIR/projects/${PID}_VerifyProj$STAMP"
+P2_DIR="$U2_DIR/project/${PID}_VerifyProj$STAMP"
+A2_DIR="$U2_DIR/annotation/${PID}_VerifyProj$STAMP"
 
-inb "test -d '$P2_DIR/images'" && ok "folder now exists under the NEW owner" \
+inb "test -d '$P2_DIR/images'" && ok "project folder now exists under the NEW owner" \
                                || bad "MISSING $P2_DIR/images"
+inb "test -d '$A2_DIR'" && ok "annotation folder moved to the NEW owner too" \
+                        || bad "MISSING $A2_DIR"
 inb "test -d '$P1_DIR'" && bad "old owner's project folder still exists (should have moved)" \
                         || ok "old owner's project folder is gone"
 
@@ -188,9 +213,50 @@ inb "test -f '$NEW_PATH'" && ok "the file exists at the new path" || bad "no fil
 
 NEW_ANN=$(sql "SELECT annotations_path FROM images WHERE id=$IMG_ID;")
 case "$NEW_ANN" in
-  "$P2_DIR"/*) ok "annotations_path was rewritten too" ;;
+  "$A2_DIR"/*) ok "annotations_path was rewritten too" ;;
   *) bad "annotations_path still points at the old owner: $NEW_ANN" ;;
 esac
+
+# ── 8b. role change → the whole user folder moves between buckets ────
+hdr "8b. Promoting a user MOVES their folder from users/ to admin/"
+curl -s -X PATCH "$API/api/users/$U2_ID" "${AUTH[@]}" -H 'Content-Type: application/json' \
+     -d '{"role":"admin"}' >/dev/null
+ADM_DIR="$STORAGE/admin/${U2_ID}_${U2}"
+inb "test -d '$ADM_DIR'" && ok "folder moved to admin/${U2_ID}_${U2}" \
+                         || bad "MISSING $ADM_DIR after promotion"
+inb "test -d '$U2_DIR'" && bad "old users/ folder still exists after promotion" \
+                        || ok "old users/ folder is gone"
+PROMO_PATH=$(sql "SELECT storage_path FROM images WHERE id=$IMG_ID;")
+case "$PROMO_PATH" in
+  "$ADM_DIR"/*) ok "Postgres paths were rewritten to admin/" ;;
+  *) bad "Postgres still points at users/: $PROMO_PATH" ;;
+esac
+inb "test -f '$PROMO_PATH'" && ok "the file exists at the admin/ path" \
+                            || bad "no file at $PROMO_PATH"
+# Put them back so the cleanup below behaves predictably.
+curl -s -X PATCH "$API/api/users/$U2_ID" "${AUTH[@]}" -H 'Content-Type: application/json' \
+     -d '{"role":"user"}' >/dev/null
+
+# ── 8c. deleting a user orphans their projects, keeps the data ───────
+hdr "8c. Deleting a user moves their projects to orphan_projects/"
+DEL=$(curl -s -X DELETE "$API/api/users/$U2_ID/permanent" "${AUTH[@]}")
+info "delete response: $DEL"
+ORPH="$STORAGE/orphan_projects/${U2_ID}_${U2}"
+inb "test -d '$ORPH'" && ok "files preserved at orphan_projects/${U2_ID}_${U2}" \
+                      || bad "MISSING $ORPH — deleted user's data was lost"
+GONE=$(sql "SELECT count(*) FROM users WHERE id=$U2_ID;")
+[[ "$GONE" == "0" ]] && ok "user row is gone from Postgres" \
+                     || bad "user row still present (count=$GONE)"
+ASSIGNEE=$(sql "SELECT coalesce(assigned_user_id::text,'NULL') FROM projects WHERE id=$PID;")
+[[ "$ASSIGNEE" == "NULL" ]] && ok "their project survived and is now unassigned" \
+                            || bad "project assignee is '$ASSIGNEE', expected NULL"
+ORPH_PATH=$(sql "SELECT storage_path FROM images WHERE id=$IMG_ID;")
+case "$ORPH_PATH" in
+  "$ORPH"/*) ok "image paths were rewritten into orphan storage" ;;
+  *) bad "image path was not rewritten: $ORPH_PATH" ;;
+esac
+inb "test -f '$ORPH_PATH'" && ok "the image file still exists in orphan storage" \
+                           || bad "no file at $ORPH_PATH"
 
 # ── 9. Postgres holds paths, not bytes ───────────────────────────────
 hdr "9. Postgres stores paths only — never image bytes"
@@ -204,16 +270,18 @@ GEOM=$(sql "SELECT data_type FROM information_schema.columns
 info "annotations.geometry is '$GEOM' (jsonb = indexable, correct)"
 
 # ── cleanup ──────────────────────────────────────────────────────────
+# U2 was already permanently deleted in step 8c. Remove the rest, and use the
+# permanent endpoint so this script does not leave test accounts behind (the
+# earlier deactivate-only cleanup was why vtest_* rows accumulated).
 hdr "Cleanup"
 curl -s -X DELETE "$API/api/projects/$PID" "${AUTH[@]}" >/dev/null && info "deleted test project $PID"
-curl -s -X DELETE "$API/api/users/$U1_ID" "${AUTH[@]}" >/dev/null
-curl -s -X DELETE "$API/api/users/$U2_ID" "${AUTH[@]}" >/dev/null
-info "deactivated test users (accounts are never hard-deleted by design)"
+curl -s -X DELETE "$API/api/users/$U1_ID/permanent" "${AUTH[@]}" >/dev/null
+info "removed test user $U1"
 rm -f "$TMPIMG"
 echo
-info "NOTE: the test users' folders are intentionally left on disk —"
-info "deactivation must never destroy someone's work."
-inb "ls -d '$U1_DIR' '$U2_DIR'" | sed 's/^/       /'
+info "NOTE: deleted users' files are preserved under orphan_projects/ —"
+info "removing an account must never destroy someone's work."
+inb "ls -d '$STORAGE/orphan_projects'/* 2>/dev/null" | sed 's/^/       /'
 
 echo
 echo "═════════════════════════════════════════════════════════"
