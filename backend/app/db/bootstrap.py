@@ -38,7 +38,7 @@ async def ensure_bootstrap_admin() -> None:
         db.add(admin)
         await db.flush()
         from app.services import storage
-        storage.ensure_user_dir(admin.id, admin.username)
+        storage.ensure_user_dir(admin.id, admin.username, admin.role)
         await db.commit()
         log.info(
             "Created initial admin account %r. Change the password after "
@@ -81,6 +81,6 @@ async def ensure_seed_test_user() -> None:
         db.add(test_user)
         await db.flush()
         from app.services import storage
-        storage.ensure_user_dir(test_user.id, test_user.username)
+        storage.ensure_user_dir(test_user.id, test_user.username, test_user.role)
         await db.commit()
         log.info("Created test account %r.", settings.BOOTSTRAP_TEST_USERNAME)

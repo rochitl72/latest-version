@@ -8,10 +8,10 @@ The upload path does three safety checks on every file before it is accepted:
   3. A real image-decode check (Pillow), so something merely wearing an image
      extension is rejected.
 
-Files are stored on disk (not in the database) at
-`STORAGE_DIR/project_{id}/{xx}/{uuid}.ext`. The extra `{xx}` shard directory
-keeps any single folder small so the filesystem stays fast at tens of thousands
-of images. The database row only holds the path.
+Files are stored on disk (not in the database) directly inside the owning
+project's images folder:
+`STORAGE_DIR/{admin|users}/{owner}/project/{project}/images/{uuid}.ext`.
+The database row only holds the path.
 
 Membership is required to list a project's images; uploading and deleting are
 admin-only.
@@ -137,7 +137,7 @@ async def upload_images(
             f"(got {len(files)}, limit {settings.MAX_FILES_PER_UPLOAD}).",
         )
 
-    storage.ensure_project_dirs(owner.id, owner.username, project.id, project.name)
+    storage.ensure_project_dirs(owner.id, owner.username, owner.role, project.id, project.name)
 
     version_id = project.active_version_id
     if not version_id:
@@ -167,7 +167,7 @@ async def upload_images(
         #   storage/users/{owner}/projects/{project}/images/{ab}/{uuid}.ext
         unique_hex = uuid.uuid4().hex
         target = storage.image_target_path(
-            owner.id, owner.username, project.id, project.name, unique_hex, ext,
+            owner.id, owner.username, owner.role, project.id, project.name, unique_hex, ext,
         )
 
         # 2. Stream to disk with a hard size cap, so an oversized upload can

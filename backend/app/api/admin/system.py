@@ -180,7 +180,7 @@ async def system_storage(
 
     out = []
     for u in users:
-        udir = storage.user_dir(u.id, u.username)
+        udir = storage.user_dir(u.id, u.username, u.role)
         size, files = _dir_size(udir)
 
         projects = (
@@ -191,7 +191,7 @@ async def system_storage(
 
         proj_rows = []
         for p in projects:
-            pdir = storage.project_dir(u.id, u.username, p.id, p.name)
+            pdir = storage.project_dir(u.id, u.username, u.role, p.id, p.name)
             psize, pfiles = _dir_size(pdir)
             n_images = await db.scalar(
                 select(func.count()).select_from(Image).where(Image.project_id == p.id)
@@ -223,7 +223,11 @@ async def system_storage(
             "projects": proj_rows,
         })
 
-    return {"users": out, "root": str(storage.users_root())}
+    return {
+        "users": out,
+        "admin_root": str(storage.role_root("admin")),
+        "users_root": str(storage.role_root("user")),
+    }
 
 
 # ─── Integrity (on demand — walks the filesystem) ────────────────────
@@ -525,7 +529,7 @@ async def system_user_detail(
         raise HTTPException(404, "User not found")
 
     uid, uname, full, email, role, status_, created, last_login = row
-    udir = storage.user_dir(uid, uname)
+    udir = storage.user_dir(uid, uname, role)
     size, files = _dir_size(udir)
 
     # ── Projects assigned to them, with per-project image counts ──
@@ -539,7 +543,7 @@ async def system_user_detail(
 
     proj_out = []
     for pid, pname, ptask, pcreated in projects:
-        pdir = storage.project_dir(uid, uname, pid, pname)
+        pdir = storage.project_dir(uid, uname, role, pid, pname)
         psize, pfiles = _dir_size(pdir)
         imgs = (
             await db.execute(

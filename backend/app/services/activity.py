@@ -66,6 +66,6 @@ async def record(
                 bits.append(f"image={image_id}")
             if annotation_id is not None:
                 bits.append(f"annotation={annotation_id}")
-            storage.append_activity_log(user.id, user.username, " ".join(bits))
+            storage.append_activity_log(user.id, user.username, user.role, " ".join(bits))
         except Exception:
             log.exception("Failed to mirror activity to file for action=%r", action)

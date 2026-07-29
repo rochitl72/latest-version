@@ -83,9 +83,10 @@ async def create_user_row(
     )
     db.add(user)
     await db.flush()
-    # Create this account's on-disk home folder immediately, so their storage
-    # tree exists the moment the account does (per the per-user storage model).
-    storage.ensure_user_dir(user.id, user.username)
+    # Create this account's on-disk home folder immediately, under the
+    # role-appropriate bucket (admin/ or users/), so their storage tree
+    # exists the moment the account does (per the per-user storage model).
+    storage.ensure_user_dir(user.id, user.username, user.role)
     return user
 
 
@@ -140,6 +141,37 @@ async def update_user(
         # Don't allow removing the last admin — that would lock everyone out.
         if user.role == Role.ADMIN and payload.role != Role.ADMIN:
             await _guard_last_admin(db, user)
+
+        old_role, new_role = user.role, payload.role
+
+        # A user's whole folder lives under admin/ or users/ depending on
+        # role. Move it to follow the new role, then rewrite every stored
+        # path for this user's owned projects/images in this same
+        # transaction, so the database and the disk never disagree about
+        # where a file lives — either both change or (on error) neither does.
+        old_prefix = str(storage.user_dir(user.id, user.username, old_role))
+        new_prefix = str(storage.user_dir(user.id, user.username, new_role))
+        if old_prefix != new_prefix:
+            storage.move_user_role_dir(user.id, user.username, old_role, new_role)
+            owned_project_ids = [
+                r[0] for r in (
+                    await db.execute(
+                        select(Project.id).where(Project.assigned_user_id == user.id)
+                    )
+                ).all()
+            ]
+            if owned_project_ids:
+                imgs = (
+                    await db.execute(
+                        select(Image).where(Image.project_id.in_(owned_project_ids))
+                    )
+                ).scalars().all()
+                for img in imgs:
+                    if img.storage_path and img.storage_path.startswith(old_prefix):
+                        img.storage_path = new_prefix + img.storage_path[len(old_prefix):]
+                    if img.annotations_path and img.annotations_path.startswith(old_prefix):
+                        img.annotations_path = new_prefix + img.annotations_path[len(old_prefix):]
+
         changes["role"] = {"from": user.role, "to": payload.role}
         user.role = payload.role
 

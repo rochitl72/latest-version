@@ -259,13 +259,16 @@ async def set_assignee(
     # rewrite the stored paths so the DB matches. If there is no old owner (a
     # first-time assignment) there are no files yet — nothing to move.
     if old_user and new_user:
-        old_prefix = str(storage.project_dir(
-            old_user.id, old_user.username, project.id, project.name))
-        new_prefix = str(storage.project_dir(
-            new_user.id, new_user.username, project.id, project.name))
+        # Note: project_dir/annotation_dir are two SEPARATE subtrees now
+        # (project/{proj}/images and annotation/{proj}/...). A prefix rewrite
+        # only works cleanly if both share the same owner-root prefix, which
+        # they do (both live under user_dir(...)), so a single prefix swap
+        # still correctly retargets paths under either subtree.
+        old_prefix = str(storage.user_dir(old_user.id, old_user.username, old_user.role))
+        new_prefix = str(storage.user_dir(new_user.id, new_user.username, new_user.role))
         storage.move_project_dir(
-            old_user.id, old_user.username,
-            new_user.id, new_user.username,
+            old_user.id, old_user.username, old_user.role,
+            new_user.id, new_user.username, new_user.role,
             project.id, project.name,
         )
         # Rewrite every affected image path from the old owner prefix to the new.
@@ -280,7 +283,7 @@ async def set_assignee(
     elif new_user:
         # First assignment: just make sure the new owner's folders exist.
         storage.ensure_project_dirs(
-            new_user.id, new_user.username, project.id, project.name)
+            new_user.id, new_user.username, new_user.role, project.id, project.name)
 
     project.assigned_user_id = new_id
     await activity.record(

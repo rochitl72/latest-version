@@ -238,22 +238,35 @@ export default function SystemPanel() {
         <h2>
           <UsersIcon size={16} /> Per user
         </h2>
-        <div className="sys-userbar">
-          {storage?.users?.map((u) => (
-            <button
-              key={u.user_id}
-              className={`sys-usertab ${
-                u.user_id === selectedId ? "active" : ""
-              }`}
-              onClick={() => setSelectedId(u.user_id)}
-            >
-              <span className="sys-mono">{u.folder}</span>
-              <small>
-                {u.size_human} · {u.file_count} files
-              </small>
-            </button>
-          ))}
-        </div>
+        {/* Grouped by role — admin/ and users/ are separate branches on disk,
+            so the tab bar mirrors that split rather than one flat list. */}
+        {["admin", "user"].map((roleGroup) => {
+          const group = storage?.users?.filter((u) => u.role === roleGroup) || [];
+          if (group.length === 0) return null;
+          return (
+            <div key={roleGroup} className="sys-usergroup">
+              <span className="sys-usergroup-label">
+                {roleGroup === "admin" ? "Admins (admin/)" : "Users (users/)"}
+              </span>
+              <div className="sys-userbar">
+                {group.map((u) => (
+                  <button
+                    key={u.user_id}
+                    className={`sys-usertab ${
+                      u.user_id === selectedId ? "active" : ""
+                    }`}
+                    onClick={() => setSelectedId(u.user_id)}
+                  >
+                    <span className="sys-mono">{u.folder}</span>
+                    <small>
+                      {u.size_human} · {u.file_count} files
+                    </small>
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })}
 
         {detail && (
           <div className="sys-split">
