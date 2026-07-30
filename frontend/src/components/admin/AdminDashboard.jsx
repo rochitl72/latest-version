@@ -33,7 +33,7 @@ import {
 const STATUS_META = {
   unannotated: { label: "Unannotated", color: "#cbd5e1" },
   in_progress: { label: "In progress", color: "#f59e0b" },
-  annotated: { label: "Annotated", color: "#6b4eff" },
+  annotated: { label: "Annotated", color: "#15803d" },
   needs_review: { label: "Needs review", color: "#0ea5e9" },
   approved: { label: "Approved", color: "#10b981" },
   rejected: { label: "Rejected", color: "#ef4444" },
@@ -75,10 +75,10 @@ function ProgressRing({ pct, done, total, size = 132 }) {
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img"
            aria-label={`${done} of ${total} images done, ${pct}%`}>
         <circle cx={size / 2} cy={size / 2} r={r} fill="none"
-                stroke="#e9e7f5" strokeWidth={stroke} />
+                stroke="#e2e9e2" strokeWidth={stroke} />
         <circle
           cx={size / 2} cy={size / 2} r={r} fill="none"
-          stroke="#6b4eff" strokeWidth={stroke} strokeLinecap="round"
+          stroke="#15803d" strokeWidth={stroke} strokeLinecap="round"
           strokeDasharray={`${c * filled} ${c}`}
           transform={`rotate(-90 ${size / 2} ${size / 2})`}
         />
@@ -154,7 +154,7 @@ function TrendChart({ series }) {
         {ticks.map((t) => (
           <g key={t}>
             <line x1={pad.l} x2={w - pad.r} y1={y(t)} y2={y(t)}
-                  stroke="#e9e7f5" strokeWidth="1" />
+                  stroke="#e2e9e2" strokeWidth="1" />
             <text x={pad.l - 6} y={y(t) + 4} textAnchor="end" className="chart-tick">
               {t}
             </text>
@@ -168,7 +168,7 @@ function TrendChart({ series }) {
           return (
             <g key={d.date}>
               <rect x={cx - barW - 1} y={y(d.marked_done)} width={barW}
-                    height={Math.max(0, hDone)} rx="2" fill="#6b4eff">
+                    height={Math.max(0, hDone)} rx="2" fill="#15803d">
                 <title>{`${d.date} · ${d.marked_done} marked done`}</title>
               </rect>
               <rect x={cx + 1} y={y(d.approved)} width={barW}
@@ -188,7 +188,7 @@ function TrendChart({ series }) {
       </svg>
 
       <div className="chart-legend">
-        <span><i style={{ background: "#6b4eff" }} /> Marked done</span>
+        <span><i style={{ background: "#15803d" }} /> Marked done</span>
         <span><i style={{ background: "#10b981" }} /> Approved</span>
       </div>
       {!anyData && (
