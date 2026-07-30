@@ -2286,3 +2286,89 @@ body {
   text-align: right; font-variant-numeric: tabular-nums;
 }
 .dash-projtable td:first-child { font-weight: 600; }
+
+/* ── Image tile overlays: legible on ANY photo ─────────────────────────
+   The badges on a thumbnail inherited the panel palette — .status had no
+   colour of its own so it took --text (#21243a, near-black) and was drawn
+   onto a dark scrim; .split-badge/.seq-badge used --muted (mid grey), which
+   is low-contrast against both dark and light. Only .filename set an explicit
+   light colour, which is why it was the one you could actually read.
+
+   Rather than nudging greys, each badge now carries its own solid background,
+   so it is readable over bright aerial imagery, dark ground, or anything else.
+   Status colours match the dashboard legend so the two views agree. */
+
+.tile-overlay {
+  /* Aerial shots are bright right to the edge, so the scrim starts earlier
+     and ends darker than the original transparent-50% ramp. */
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 30%,
+    rgba(0, 0, 0, 0.45) 62%,
+    rgba(0, 0, 0, 0.88) 100%
+  );
+  gap: 4px;
+  padding: 10px 9px 9px;
+}
+
+/* Status chip — solid fill, never relies on the photo behind it. */
+.tile-overlay .status {
+  border: none;
+  border-radius: 5px;
+  padding: 3px 7px;
+  font-weight: 700;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  margin-bottom: 0;
+  background: #64748b;
+  color: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+.tile-overlay .status.status-unannotated  { background: #e2e8f0; color: #334155; }
+.tile-overlay .status.status-in_progress  { background: #f59e0b; color: #3d2606; }
+.tile-overlay .status.status-annotated    { background: #6b4eff; color: #fff; }
+.tile-overlay .status.status-needs_review { background: #0ea5e9; color: #05263a; }
+.tile-overlay .status.status-approved     { background: #10b981; color: #04322a; }
+/* Deeper than the #ef4444 used elsewhere: white on that is only 3.8:1, which
+   is short of the 4.5:1 small text needs. #dc2626 reaches 4.8:1. */
+.tile-overlay .status.status-rejected     { background: #dc2626; color: #fff; }
+
+/* Split / frame chips — small, but still on their own backing. */
+.tile-overlay .split-badge,
+.tile-overlay .seq-badge {
+  align-self: flex-start;
+  color: #f1f5f9;
+  background: rgba(15, 23, 42, 0.62);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+.tile-overlay .filename {
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 600;
+  /* The scrim carries most of the contrast; this covers the rare blown-out
+     highlight that survives it. */
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+/* The split dropdown had a dark background but inherited dark text, so it
+   read as an empty box. */
+.split-select {
+  background: rgba(15, 23, 42, 0.82);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 5px;
+  padding: 3px 5px;
+  font-weight: 600;
+  cursor: pointer;
+  backdrop-filter: blur(3px);
+}
+.split-select:hover { background: rgba(15, 23, 42, 0.95); }
+.split-select:focus-visible { outline: 2px solid #6b4eff; outline-offset: 1px; }
+/* The popup list renders on a system surface, so it needs readable colours
+   of its own rather than the translucent dark ones above. */
+.split-select option { background: #fff; color: #1f2430; }
