@@ -2167,33 +2167,70 @@ body {
   font-size: 13px;
 }
 
-/* ── Label colour picker ───────────────────────────────────────────── */
-.label-swatches { margin: 8px 0 12px; }
-.label-swatches-hint {
-  display: block; font-size: 11px; font-weight: 600; letter-spacing: .03em;
-  text-transform: uppercase; color: var(--muted); margin-bottom: 6px;
+/* ── Label colour picker ───────────────────────────────────────────────
+   16 swatches in a fixed 8x2 block. The custom picker lives in the header
+   rather than as a 17th tile — as a tile it made the last row one short and
+   the whole thing looked ragged. Swatches are circles: they read as a colour
+   choice rather than as buttons, and let them be small without looking
+   cramped. */
+.label-swatches { margin: 10px 0 12px; }
+
+.swatch-head {
+  display: flex; align-items: center; gap: 7px; margin-bottom: 8px;
 }
-.label-swatches-hint em { font-style: normal; text-transform: none; opacity: .75; }
-.swatch-grid { display: grid; grid-template-columns: repeat(9, 1fr); gap: 5px; }
-.swatch {
-  width: 100%; aspect-ratio: 1; min-width: 0; padding: 0;
-  border-radius: 6px; border: 2px solid transparent; cursor: pointer;
-  font-size: 11px; font-weight: 700; line-height: 1;
-  display: flex; align-items: center; justify-content: center;
-  transition: transform .08s ease, box-shadow .08s ease;
+.swatch-title {
+  font-size: 10.5px; font-weight: 600; letter-spacing: .05em;
+  text-transform: uppercase; color: var(--muted);
 }
-.swatch:hover { transform: scale(1.12); }
-.swatch.active {
-  border-color: var(--text);
-  box-shadow: 0 0 0 2px var(--surface) inset;
+.swatch-current {
+  width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .14);
 }
+.swatch-mode { font-size: 10.5px; color: var(--muted); }
+.swatch-reset {
+  font-size: 10.5px; color: var(--muted); background: none; border: none;
+  padding: 0; cursor: pointer; text-decoration: underline;
+}
+.swatch-reset:hover { color: var(--text); }
+
+/* Custom picker: a small outlined control, not a rainbow tile. */
 .swatch-custom {
-  position: relative; overflow: hidden;
-  background: conic-gradient(#f43f5e,#f59e0b,#22c55e,#0ea5e9,#8b5cf6,#f43f5e);
+  margin-left: auto; position: relative; overflow: hidden;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface-2);
+  color: var(--muted); flex-shrink: 0;
 }
+.swatch-custom:hover { border-color: var(--border-hi); color: var(--text); }
 .swatch-custom input[type="color"] {
   position: absolute; inset: 0; width: 100%; height: 100%;
   opacity: 0; cursor: pointer; border: none; padding: 0;
+}
+
+.swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 20px);
+  gap: 7px;
+  justify-content: start;
+}
+.swatch {
+  width: 20px; height: 20px; padding: 0;
+  border-radius: 50%; border: none; cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .12);
+  transition: transform .1s ease, box-shadow .1s ease;
+}
+.swatch:hover { transform: scale(1.18); }
+/* Colours already taken by another class recede, but stay selectable —
+   two classes sharing a colour is allowed, just rarely what you want. */
+.swatch.used { opacity: .38; }
+.swatch.used:hover { opacity: .75; }
+.swatch.active {
+  opacity: 1;
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--text);
+}
+.swatch:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--accent, #6B4EFF);
 }
 
 /* ── Admin dashboard (redesigned: image-based progress) ────────────── */

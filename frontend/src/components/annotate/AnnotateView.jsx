@@ -43,6 +43,7 @@ import {
   ArrowLeft,
   Plus,
   Trash2,
+  Pipette,
 } from "lucide-react";
 
 const TOOLS = [
@@ -546,15 +547,46 @@ export default function AnnotateView() {
                 </div>
 
                 {/* Shapes are drawn in their class's colour, so this is how
-                    you tell two classes apart on the canvas. */}
+                    you tell two classes apart on the canvas.
+                    16 swatches in a clean 8x2 block; the custom picker sits in
+                    the header rather than as a 17th tile, which is what made
+                    the grid ragged. */}
                 <div className="label-swatches">
-                  <span className="label-swatches-hint">
-                    Colour
-                    <em>{labelColor ? "" : " · auto"}</em>
-                  </span>
-                  <div className="swatch-grid">
+                  <div className="swatch-head">
+                    <span className="swatch-title">Colour</span>
+                    <span
+                      className="swatch-current"
+                      style={{ background: labelColor || suggestLabelColor(labels) }}
+                      aria-hidden="true"
+                    />
+                    <span className="swatch-mode">
+                      {labelColor ? "chosen" : "auto"}
+                    </span>
+                    {labelColor && (
+                      <button
+                        type="button"
+                        className="swatch-reset"
+                        onClick={() => setLabelColor(null)}
+                        title="Back to the next free colour"
+                      >
+                        reset
+                      </button>
+                    )}
+                    <label className="swatch-custom" title="Pick any colour">
+                      <Pipette size={11} aria-hidden="true" />
+                      <input
+                        type="color"
+                        value={labelColor || suggestLabelColor(labels)}
+                        onChange={(e) => setLabelColor(e.target.value)}
+                        aria-label="Pick a custom colour"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="swatch-grid" role="group" aria-label="Label colour">
                     {LABEL_PALETTE.map((c) => {
-                      const active = labelColor === c;
+                      const active =
+                        (labelColor || "").toLowerCase() === c.toLowerCase();
                       const used = labels.some(
                         (l) => (l.color || "").toLowerCase() === c.toLowerCase(),
                       );
@@ -562,27 +594,19 @@ export default function AnnotateView() {
                         <button
                           key={c}
                           type="button"
-                          className={`swatch${active ? " active" : ""}`}
+                          className={`swatch${active ? " active" : ""}${
+                            used ? " used" : ""
+                          }`}
                           style={{ background: c, color: contrastText(c) }}
-                          title={used ? `${c} — already used by another class` : c}
+                          title={
+                            used ? `${c} · already used by another class` : c
+                          }
                           aria-label={`Use colour ${c}`}
                           aria-pressed={active}
                           onClick={() => setLabelColor(active ? null : c)}
-                        >
-                          {active ? "✓" : used ? "·" : ""}
-                        </button>
+                        />
                       );
                     })}
-                    <label
-                      className="swatch swatch-custom"
-                      title="Pick any custom colour"
-                    >
-                      <input
-                        type="color"
-                        value={labelColor || suggestLabelColor(labels)}
-                        onChange={(e) => setLabelColor(e.target.value)}
-                      />
-                    </label>
                   </div>
                 </div>
               </>
