@@ -2409,3 +2409,58 @@ body {
 /* The popup list renders on a system surface, so it needs readable colours
    of its own rather than the translucent dark ones above. */
 .split-select option { background: #fff; color: #1f2430; }
+
+/* ── Image status panel ────────────────────────────────────────────────
+   The buttons here were invisible as buttons. A late theme rule set
+   `.status-chip { border: 1px solid transparent }` and another set
+   `background: #fff` — on a white card that leaves unselected options as bare
+   floating text, so only the selected one looked interactive. Both roles now
+   get the same structure: a labelled row of segmented options, with an admin
+   getting a second row rather than a collapsed <details>. */
+.review-bar {
+  padding: 16px 18px;
+  border-bottom: none;
+}
+.review-bar h4 {
+  margin: 0 0 6px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--muted);
+}
+.review-note { font-size: 11.5px; line-height: 1.45; margin: 0 0 14px; }
+.review-lock {
+  font-size: 11.5px; margin: 0 0 12px; padding: 7px 10px;
+  background: #fff7ed; color: #b45309; border-radius: 7px;
+}
+
+.review-group { margin-bottom: 12px; }
+.review-group:last-child { margin-bottom: 0; }
+.review-group-label {
+  display: flex; align-items: center; gap: 6px; margin-bottom: 6px;
+  font-size: 10.5px; font-weight: 600; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--muted);
+}
+.review-group-label em {
+  font-style: normal; text-transform: none; letter-spacing: 0;
+  font-size: 9.5px; font-weight: 600;
+  padding: 1px 6px; border-radius: 999px;
+  background: var(--primary-050); color: var(--primary-600);
+}
+
+/* The review options share the dashboard's segmented control, so the two
+   screens use one vocabulary for "pick one of these". */
+.review-bar .seg-group { display: flex; width: 100%; }
+.review-bar .seg {
+  flex: 1; text-align: center; white-space: nowrap;
+  padding: 7px 6px; font-size: 11.5px;
+}
+/* Active state carries the status's own meaning rather than one generic
+   accent — the same colours the dashboard and thumbnails use. */
+.review-bar .seg.active { color: #fff; box-shadow: none; }
+.review-bar .seg-in_progress.active  { background: #f59e0b; color: #3d2606; }
+.review-bar .seg-annotated.active    { background: #6B4EFF; }
+.review-bar .seg-needs_review.active { background: #0ea5e9; color: #05263a; }
+.review-bar .seg-approved.active     { background: #10b981; color: #04322a; }
+.review-bar .seg-rejected.active     { background: #dc2626; }
+.review-bar .seg:focus-visible {
+  outline: 2px solid var(--accent, #6B4EFF); outline-offset: -2px;
+}

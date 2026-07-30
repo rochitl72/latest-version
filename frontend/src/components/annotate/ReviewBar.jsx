@@ -62,34 +62,47 @@ export default function ReviewBar({
           </button>
         </p>
       )}
-      <div className="status-chips">
-        {PRIMARY.map((s) => (
-          <button
-            key={s.id}
-            type="button"
-            className={`status-chip ${status === s.id ? "active" : ""}`}
-            onClick={() => setStatus(s.id)}
-          >
-            {s.label}
-          </button>
-        ))}
+      {/* Both roles get the same shape: a labelled row of segmented options.
+          An admin simply gets a second row. The review options used to be
+          hidden behind a <details> with a raw disclosure triangle, which read
+          as an unfinished control rather than a section. */}
+      <div className="review-group">
+        <span className="review-group-label">Progress</span>
+        <div className="seg-group" role="group" aria-label="Progress status">
+          {PRIMARY.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              className={`seg seg-${s.id}${status === s.id ? " active" : ""}`}
+              aria-pressed={status === s.id}
+              onClick={() => setStatus(s.id)}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
       </div>
+
       {isAdmin() && (
-        <details className="review-qa-details">
-          <summary>Review decision (admin)</summary>
-          <div className="status-chips">
+        <div className="review-group">
+          <span className="review-group-label">
+            Review decision
+            <em>admin</em>
+          </span>
+          <div className="seg-group" role="group" aria-label="Review decision">
             {QA.map((s) => (
               <button
                 key={s.id}
                 type="button"
-                className={`status-chip ${status === s.id ? "active" : ""}`}
+                className={`seg seg-${s.id}${status === s.id ? " active" : ""}`}
+                aria-pressed={status === s.id}
                 onClick={() => setStatus(s.id)}
               >
                 {s.label}
               </button>
             ))}
           </div>
-        </details>
+        </div>
       )}
     </section>
   );
