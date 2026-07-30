@@ -410,10 +410,26 @@ unreferenced ones.
 
 ### Sizing guidance
 
-Storage is dominated by the original uploads. Each annotated image also gets an
-overlay PNG (roughly the same size as the original) plus a few KB of JSON and
-label text. **Budget about 2.2× the size of your raw image set**, plus room for
-export bundles.
+Each annotated image is stored twice: the original, plus a rendered overlay with
+the annotations drawn on it. The overlay is written as **PNG**, which is
+lossless — so for photographic input it comes out *larger* than the compressed
+original. Measured on real aerial imagery, an 11 MB JPEG produced a 40 MB PNG
+overlay.
+
+**Budget roughly 3× the size of your raw image set**, plus room for export
+bundles. On a set where every image gets annotated, expect:
+
+| | share |
+|---|---|
+| original uploads | ~1× |
+| overlay PNGs | ~1.5–2× |
+| JSON, COCO, YOLO, logs | negligible |
+
+If storage becomes a constraint, the overlay format is the thing to change —
+writing overlays as JPEG instead of PNG would cut total usage by roughly half,
+at the cost of some fidelity in the drawn lines. Overlays are regenerated from
+the database on every annotation change, so switching format is safe: existing
+files are replaced as images are edited, and nothing is lost if they are deleted.
 
 ### Using external storage (NFS, SAN)
 
