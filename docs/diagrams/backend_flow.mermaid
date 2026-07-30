@@ -12,15 +12,16 @@ flowchart TB
       A["auth/<br/>login · logout · me · users"]
       W["workspace/<br/>projects · images · annotations"]
       D["dataset/<br/>versions · splits · workflow · export"]
-      M["admin/<br/>dashboard · activity feed"]
+      M["admin/<br/>dashboard · activity feed · system panel"]
     end
     ACT["services/activity<br/>writes one audit row per mutation"]
-    STO["services/storage<br/>per-user file tree + JSON backups"]
+    STO["services/storage<br/>role-split per-user file tree"]
+    BG["BackgroundTasks<br/>overlay render · COCO/YOLO rewrite<br/>runs AFTER the response is sent"]
     MET["services/metrics + export<br/>IoU, COCO/YOLO writers"]
   end
 
   PG[("PostgreSQL<br/>users, projects(assigned_user_id), labels,<br/>versions, images(meta), annotations,<br/>activity_log")]
-  FS[("Server disk<br/>users/{uid}_{name}/projects/{pid}_{name}/<br/>images · annotations · exports")]
+  FS[("Server disk — STORAGE_PATH<br/>{admin|users}/{uid}_{name}/<br/>project/{pid}_{name}/images<br/>annotation/{pid}_{name}/json · overlays · coco · yolo · logs")]
 
   UI --> EDIT
   EDIT --> HIST
@@ -37,4 +38,6 @@ flowchart TB
   MET --> PG
   W --> STO
   D --> STO
-  STO -->|"image bytes · annotations.json · export bundles"| FS
+  W -->|"defers heavy work"| BG
+  BG --> STO
+  STO -->|"image bytes · annotation JSON · overlays · COCO/YOLO · logs"| FS
