@@ -72,7 +72,16 @@ export function makeCreateCmd(payload) {
     do: async () => {
       const ann = await createAnnotation(payload);
       createdId = ann.id;
-      useEditor.getState().addAnnotation(ann);
+      const ed = useEditor.getState();
+      ed.addAnnotation(ann);
+      // The server flips an image from "unannotated" to "in_progress" on its
+      // first shape. It reports the resulting status here, so the workspace
+      // reflects it straight away instead of showing a stale badge until the
+      // page is reloaded. We apply whatever the server says rather than
+      // re-deriving the rule client-side.
+      if (ann.image_status && ann.image_status !== ed.imageStatus) {
+        ed.setImageStatus(ann.image_status);
+      }
     },
     undo: async () => {
       if (createdId == null) return;

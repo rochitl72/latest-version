@@ -2,7 +2,7 @@
 // Owns the label list, loads/saves annotations, wires the canvas to the editor
 // store, and hosts the review + gallery chrome around the drawing surface.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import AnnotationCanvas from "./canvas/AnnotationCanvas";
 import { useEditor } from "../../store/editor";
@@ -157,12 +157,30 @@ export default function AnnotateView() {
     }
   };
 
+  // The gallery strip and the status badge read from `projectImages`, which is
+  // fetched once per image. When the status changes underneath us — most often
+  // the server flipping "unannotated" to "in_progress" on the first shape — that
+  // list goes stale and the thumbnail keeps its old colour for the rest of the
+  // session. Re-fetch whenever the status actually changes.
+  const lastStatusRef = useRef(null);
+  useEffect(() => {
+    if (lastStatusRef.current === null) {
+      // First value comes from the load below; nothing to re-fetch for.
+      lastStatusRef.current = imageStatus;
+      return;
+    }
+    if (lastStatusRef.current === imageStatus) return;
+    lastStatusRef.current = imageStatus;
+    void refreshProjectImages();
+  }, [imageStatus]);
+
   useEffect(() => {
     clearHistory();
     // Drop anything belonging to the image we were just on, BEFORE loading the
     // new one — a half-drawn shape or a live selection must not carry over.
     resetForNewImage();
     setErr(null);
+    lastStatusRef.current = null;
     (async () => {
       try {
         const imgs = await refreshProjectImages();

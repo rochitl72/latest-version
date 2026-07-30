@@ -280,6 +280,13 @@ class AnnotationOut(BaseModel):
     created_by: int | None = None
     created_by_username: str | None = None
 
+    # The image's status AFTER this write. Creating the first shape flips an
+    # image from "unannotated" to "in_progress" server-side, and the client has
+    # no other way to learn that happened — it used to keep showing the stale
+    # status for the rest of the session. Reporting it here keeps the rule in
+    # one place instead of re-implementing it in the frontend.
+    image_status: str | None = None
+
     class Config:
         from_attributes = True
 
@@ -353,7 +360,13 @@ async def create_annotation(
     await _sync_export_artifacts(db, img, Action.ANNOTATION_CREATE, user, background)
     await db.commit()
     await db.refresh(ann)
-    return ann
+    await db.refresh(img)
+    # Tell the client where the image ended up, so it can show "In progress"
+    # without reloading. Set on the response object only — `ann` is an ORM row
+    # and image_status is not one of its columns.
+    out = AnnotationOut.model_validate(ann).model_dump()
+    out["image_status"] = img.status
+    return out
 
 
 @router.patch("/annotations/{annotation_id}", response_model=AnnotationOut)
