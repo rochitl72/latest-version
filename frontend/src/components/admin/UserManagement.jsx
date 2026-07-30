@@ -10,15 +10,12 @@ import {
   UserPlus,
   UserX,
   UserCheck,
-  Trash2,
-  AlertTriangle,
 } from "lucide-react";
 import {
   listUsers,
   createUser,
   updateUser,
   deactivateUser,
-  deleteUserPermanently,
 } from "../../lib/api/client";
 import { getCurrentUser } from "../../lib/auth";
 
@@ -83,87 +80,9 @@ function CreateUserForm({ onCreated }) {
   );
 }
 
-/** Confirmation for permanent deletion.
- *
- * Deliberately requires typing the username rather than just clicking "OK":
- * this row cannot be restored, and the difference between this and the
- * Deactivate button next to it is not visually obvious. Making the admin
- * reproduce the name forces them to look at WHICH account they picked.
- */
-function DeleteUserDialog({ user, onCancel, onConfirm }) {
-  const [typed, setTyped] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const matches = typed === user.username;
-
-  const go = async () => {
-    if (!matches) return;
-    setBusy(true);
-    setError("");
-    try {
-      await onConfirm();
-    } catch (e) {
-      setError(e.message);
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="modal-backdrop" onClick={onCancel}>
-      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-        <h2 className="modal-title danger">
-          <AlertTriangle size={18} /> Delete @{user.username} permanently?
-        </h2>
-        <p className="modal-text">
-          This removes the account for good — it cannot be undone. Deactivating
-          instead keeps the account and lets you switch it back on later.
-        </p>
-        <ul className="modal-list">
-          <li>Their projects are <strong>kept</strong>, but become unassigned.</li>
-          <li>
-            Their files move to{" "}
-            <span className="sys-mono">storage/orphan_projects/</span> — nothing
-            is erased.
-          </li>
-          <li>
-            Annotations they drew in other people&apos;s projects stay, shown as
-            an unknown author.
-          </li>
-        </ul>
-        <label className="modal-label">
-          Type <strong>{user.username}</strong> to confirm:
-        </label>
-        <input
-          className="modal-input"
-          value={typed}
-          onChange={(e) => setTyped(e.target.value)}
-          placeholder={user.username}
-          autoFocus
-        />
-        {error && <div className="form-error">{error}</div>}
-        <div className="modal-actions">
-          <button className="btn-secondary" onClick={onCancel} disabled={busy}>
-            Cancel
-          </button>
-          <button
-            className="btn-danger"
-            onClick={go}
-            disabled={!matches || busy}
-            title={matches ? "" : "Type the username exactly to enable this"}
-          >
-            <Trash2 size={14} /> {busy ? "Deleting…" : "Delete permanently"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export default function UserManagement() {
   const [users, setUsers] = useState([]);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const [confirmDelete, setConfirmDelete] = useState(null);
   const me = getCurrentUser();
 
   const load = () =>
@@ -192,19 +111,6 @@ export default function UserManagement() {
     }
   };
 
-  const doDelete = async (u) => {
-    setError("");
-    const res = await deleteUserPermanently(u.id);
-    setConfirmDelete(null);
-    setNotice(
-      `Deleted @${u.username}.` +
-        (res.orphaned_projects
-          ? ` ${res.orphaned_projects} project(s) kept and unassigned; their files moved to orphan_projects/.`
-          : " They had no projects."),
-    );
-    load();
-  };
-
   return (
     <div className="admin-page">
       <div className="admin-head">
@@ -220,7 +126,6 @@ export default function UserManagement() {
 
       <CreateUserForm onCreated={load} />
       {error && <div className="form-error">{error}</div>}
-      {notice && <div className="form-notice">{notice}</div>}
 
       <div className="table-card">
         <table className="data-table user-table">
@@ -260,24 +165,22 @@ export default function UserManagement() {
                     {u.is_active ? "Active" : "Inactive"}
                   </span>
                 </td>
+                {/* Deactivate only. There is deliberately NO delete action:
+                    accounts are blocked from signing in, never removed, so
+                    their past annotations keep a valid author. */}
                 <td className="user-actions">
                   {u.id !== me?.id && (
-                    <>
-                      <button
-                        className="icon-btn"
-                        title={u.is_active ? "Deactivate" : "Reactivate"}
-                        onClick={() => toggleActive(u)}
-                      >
-                        {u.is_active ? <UserX size={16} /> : <UserCheck size={16} />}
-                      </button>
-                      <button
-                        className="icon-btn icon-btn-danger"
-                        title="Delete permanently"
-                        onClick={() => setConfirmDelete(u)}
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </>
+                    <button
+                      className="icon-btn"
+                      title={
+                        u.is_active
+                          ? "Deactivate — blocks sign-in, keeps their work"
+                          : "Reactivate — allows sign-in again"
+                      }
+                      onClick={() => toggleActive(u)}
+                    >
+                      {u.is_active ? <UserX size={16} /> : <UserCheck size={16} />}
+                    </button>
                   )}
                 </td>
               </tr>
@@ -285,14 +188,6 @@ export default function UserManagement() {
           </tbody>
         </table>
       </div>
-
-      {confirmDelete && (
-        <DeleteUserDialog
-          user={confirmDelete}
-          onCancel={() => setConfirmDelete(null)}
-          onConfirm={() => doDelete(confirmDelete)}
-        />
-      )}
     </div>
   );
 }

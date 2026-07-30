@@ -214,14 +214,14 @@ def export_dir(
     return d
 
 
-# ─── Orphaned data (a user was deleted, their work was kept) ─────────
+# ─── Orphaned data (retained work with no live owner) ────────────────
+# NOTE: accounts are deactivated, never deleted — there is no hard-delete
+# endpoint, by policy. So nothing currently WRITES here. These helpers are
+# kept because the integrity check excludes this folder by name, and because
+# a future "archive an account" feature would land exactly here.
 def orphan_root() -> Path:
-    """Where the projects of deleted users are kept.
-
-    Deleting an account does not destroy the labelling work done under it —
-    the project data moves here instead, one subfolder per deleted user, so
-    it stays recoverable and clearly separated from live accounts.
-    """
+    """Where retained project data with no live owner would be kept, one
+    subfolder per former account."""
     return settings.STORAGE_DIR / "orphan_projects"
 
 

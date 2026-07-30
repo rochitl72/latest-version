@@ -29,7 +29,11 @@ import PolygonMagnifier, {
 import { maskStroke } from "../../utils/colors";
 import { useHistory, makeCreateCmd, makeDeleteCmd } from "../../store/history";
 import { polyToNorm } from "../../utils/geometry";
-import { LABEL_PURPLE_PALETTE } from "../../utils/colors";
+import {
+  LABEL_PALETTE,
+  contrastText,
+  suggestLabelColor,
+} from "../../utils/colors";
 import {
   MousePointer2,
   Square,
@@ -104,6 +108,7 @@ export default function AnnotateView() {
     readOnly,
     draftPolygon,
     resetPolyDraft,
+    resetForNewImage,
   } = useEditor();
 
   const {
@@ -115,6 +120,10 @@ export default function AnnotateView() {
     push,
   } = useHistory();
   const [labelName, setLabelName] = useState("");
+  // Colour for the label class being created. Null means "not chosen yet", so
+  // we fall back to the next unused palette colour at save time rather than
+  // pinning a colour the admin never actually looked at.
+  const [labelColor, setLabelColor] = useState(null);
   // Surfaces any failed API call in this view. Without it, a rejected promise
   // disappears and the UI silently does nothing.
   const [err, setErr] = useState(null);
@@ -147,18 +156,35 @@ export default function AnnotateView() {
 
   useEffect(() => {
     clearHistory();
+    // Drop anything belonging to the image we were just on, BEFORE loading the
+    // new one — a half-drawn shape or a live selection must not carry over.
+    resetForNewImage();
+    setErr(null);
     (async () => {
-      const imgs = await refreshProjectImages();
-      const img = imgs.find((x) => x.id === iid);
-      setCurrentImage(img || null);
-      if (img) setImageStatus(img.status);
+      try {
+        const imgs = await refreshProjectImages();
+        const img = imgs.find((x) => x.id === iid);
+        setCurrentImage(img || null);
+        if (img) setImageStatus(img.status);
 
-      const [lbls, anns] = await Promise.all([
-        listLabels(pid),
-        listAnnotations(iid),
-      ]);
-      setLabels(lbls);
-      setAnnotations(anns);
+        const [lbls, anns] = await Promise.all([
+          listLabels(pid),
+          listAnnotations(iid),
+        ]);
+        // Labels first: setLabels re-validates the active label against this
+        // project's list, so the selection can never point at another
+        // project's label (which used to make every save fail with 404).
+        setLabels(lbls);
+        setAnnotations(anns);
+        if (lbls.length === 0) {
+          setErr(
+            "This project has no label classes yet. Add one in the right-hand " +
+              "panel before drawing — a shape needs a class to belong to.",
+          );
+        }
+      } catch (e) {
+        setErr(e?.message || "Could not load this image.");
+      }
     })();
   }, [pid, iid]);
 
@@ -265,8 +291,8 @@ export default function AnnotateView() {
 
   const onAddLabel = async () => {
     if (!labelName.trim()) return;
-    const color =
-      LABEL_PURPLE_PALETTE[labels.length % LABEL_PURPLE_PALETTE.length];
+    // Whatever the admin picked; otherwise the next colour no class is using.
+    const color = labelColor || suggestLabelColor(labels);
     setErr(null);
     try {
       const created = await createLabel(pid, {
@@ -276,6 +302,7 @@ export default function AnnotateView() {
       setLabels([...labels, created]);
       setActiveLabel(created.id);
       setLabelName("");
+      setLabelColor(null);
     } catch (e) {
       // Creating a label is admin-only. Without this the request just failed
       // in silence and the button looked broken.
@@ -297,9 +324,13 @@ export default function AnnotateView() {
     setErr(null);
     try {
       await deleteLabel(pid, id);
-      setLabels(labels.filter((l) => l.id !== id));
+      const remaining = labels.filter((l) => l.id !== id);
       setAnnotations(annotations.filter((a) => a.label_id !== id));
-      if (activeLabelId === id) setActiveLabel(labels[0]?.id ?? null);
+      // setLabels re-points the active label at the first REMAINING class on
+      // its own. The old code picked `labels[0]` from the pre-delete array, so
+      // deleting the first class re-selected the very label it had just
+      // removed, and the next shape saved against a dead id.
+      setLabels(remaining);
     } catch (e) {
       setErr(
         e?.status === 403
@@ -477,6 +508,47 @@ export default function AnnotateView() {
               <button onClick={onAddLabel} title="Add this label">
                 <Plus size={14} />
               </button>
+            </div>
+
+            {/* Colour picker. Shapes are drawn in their class's colour, so
+                this is how you tell two classes apart on the canvas. */}
+            <div className="label-swatches">
+              <span className="label-swatches-hint">
+                Colour
+                <em>{labelColor ? "" : " · auto"}</em>
+              </span>
+              <div className="swatch-grid">
+                {LABEL_PALETTE.map((c) => {
+                  const active = labelColor === c;
+                  const used = labels.some(
+                    (l) => (l.color || "").toLowerCase() === c.toLowerCase(),
+                  );
+                  return (
+                    <button
+                      key={c}
+                      type="button"
+                      className={`swatch${active ? " active" : ""}`}
+                      style={{ background: c, color: contrastText(c) }}
+                      title={used ? `${c} — already used by another class` : c}
+                      aria-label={`Use colour ${c}`}
+                      aria-pressed={active}
+                      onClick={() => setLabelColor(active ? null : c)}
+                    >
+                      {active ? "✓" : used ? "·" : ""}
+                    </button>
+                  );
+                })}
+                <label
+                  className="swatch swatch-custom"
+                  title="Pick any custom colour"
+                >
+                  <input
+                    type="color"
+                    value={labelColor || suggestLabelColor(labels)}
+                    onChange={(e) => setLabelColor(e.target.value)}
+                  />
+                </label>
+              </div>
             </div>
 
 

@@ -224,14 +224,11 @@ export const createUser = (data) =>
   req("/users", { method: "POST", body: JSON.stringify(data) });
 export const updateUser = (id, data) =>
   req(`/users/${id}`, { method: "PATCH", body: JSON.stringify(data) });
+// Deactivate — blocks sign-in but keeps the row, so their past annotations
+// keep a valid author. There is deliberately no hard-delete counterpart:
+// accounts are never removed, only blocked.
 export const deactivateUser = (id) =>
   req(`/users/${id}`, { method: "DELETE" });
-// PERMANENT deletion — removes the account row entirely. Their projects are
-// kept but unassigned, and their files move to storage/orphan_projects/.
-// Distinct endpoint from deactivateUser above so the destructive action can
-// never be reached by accident.
-export const deleteUserPermanently = (id) =>
-  req(`/users/${id}/permanent`, { method: "DELETE" });
 export const myStats = () => req("/users/me/stats");
 
 // ─── Account ─────────────────────────────────────────────────────────
@@ -260,6 +257,15 @@ export const setAssignee = (projectId, userId) =>
 const qp = (projectId) => (projectId ? `?project_id=${projectId}` : "");
 export const dashOverview = (projectId) =>
   req(`/dashboard/overview${qp(projectId)}`);
+
+// Everything the admin dashboard renders, in one request: x/y images done, the
+// status split, a per-day timeline over `days`, per-project rows, and per-person
+// image counts. Progress is measured in images, not annotations.
+export const dashProgress = (projectId, days = 30) => {
+  const p = new URLSearchParams({ days: String(days) });
+  if (projectId) p.set("project_id", String(projectId));
+  return req(`/dashboard/progress?${p.toString()}`);
+};
 export const dashVelocity = (projectId) =>
   req(`/dashboard/velocity${qp(projectId)}`);
 export const dashContributors = (projectId) =>

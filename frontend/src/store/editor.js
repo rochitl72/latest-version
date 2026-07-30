@@ -36,11 +36,24 @@ export const useEditor = create((set) => ({
 
   labels: [],
   activeLabelId: null,
+  // Keep the current selection ONLY if that label still exists in the incoming
+  // list; otherwise fall back to the first label.
+  //
+  // This used to be `s.activeLabelId ?? l[0]?.id ?? null`, which kept any
+  // non-null id forever. Because this store is a module-level singleton that
+  // outlives the annotate screen, opening a DIFFERENT project left
+  // activeLabelId pointing at a label belonging to the previous project. Every
+  // shape then POSTed a label_id the new project does not own, the API
+  // answered 404 "Label not found", and drawing appeared broken for every
+  // tool at once. Deleting the active label caused the same thing.
   setLabels: (l) =>
-    set((s) => ({
-      labels: l,
-      activeLabelId: s.activeLabelId ?? l[0]?.id ?? null,
-    })),
+    set((s) => {
+      const stillThere = l.some((x) => x.id === s.activeLabelId);
+      return {
+        labels: l,
+        activeLabelId: stillThere ? s.activeLabelId : (l[0]?.id ?? null),
+      };
+    }),
   setActiveLabel: (id) => set({ activeLabelId: id }),
 
   annotations: [],
@@ -88,4 +101,20 @@ export const useEditor = create((set) => ({
   appendKeypoint: (p) =>
     set((s) => ({ draftKeypoints: [...s.draftKeypoints, { ...p, v: 2 }] })),
   resetKeypointDraft: () => set({ draftKeypoints: [] }),
+
+  /** Clear everything tied to the image you were just looking at.
+   *
+   * Call this when navigating to another image or project. Without it, a
+   * half-drawn polygon or an open selection survived the navigation, because
+   * this store is a singleton — so the next Save committed points you drew on
+   * the PREVIOUS image onto the new one.
+   */
+  resetForNewImage: () =>
+    set({
+      draftBox: null,
+      draftPolygon: [],
+      draftKeypoints: [],
+      selectedIds: new Set(),
+      annotations: [],
+    }),
 }));

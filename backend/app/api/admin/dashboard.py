@@ -133,6 +133,176 @@ async def overview(
     }
 
 
+# Statuses that mean "the annotator has finished this image". Progress is
+# measured in IMAGES MARKED DONE, not in annotation count: the number of shapes
+# on an image varies wildly by content, so "127 annotations" says nothing about
+# how far through a dataset you are. Images are the unit of work, and x/y images
+# done is a figure you can act on.
+DONE_STATUSES = ("annotated", "needs_review", "approved")
+
+
+@router.get("/progress")
+async def progress(
+    project_id: int | None = None,
+    days: int = Query(30, ge=1, le=400),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    """Everything the admin dashboard renders, in one call.
+
+    Returns headline x/y progress, the status split, a per-day timeline over the
+    requested window, and a per-project breakdown — all filterable to a single
+    project and to a time range (today / 7 / 30 / 60 days).
+    """
+    # ── Headline counts ──────────────────────────────────────────────
+    q = select(Image.status, func.count()).group_by(Image.status)
+    if project_id:
+        q = q.where(Image.project_id == project_id)
+    by_status = {s: 0 for s in STATUSES}
+    for status_, n in (await db.execute(q)).all():
+        if status_ in by_status:
+            by_status[status_] = n
+    total = sum(by_status.values())
+
+    done = sum(by_status[s] for s in DONE_STATUSES)
+    approved = by_status["approved"]
+    remaining = total - done
+
+    # ── Per-day timeline, from the append-only audit log ─────────────
+    # The log is the only place image history lives; Image.status holds just the
+    # CURRENT value, so a trend has to come from here.
+    since_date = utcnow().date() - timedelta(days=days - 1)
+    since = datetime.combine(since_date, time.min, tzinfo=timezone.utc)
+
+    lq = select(ActivityLog).where(
+        ActivityLog.created_at >= since,
+        ActivityLog.action.in_([Action.IMAGE_STATUS, Action.REVIEW_APPROVE]),
+    )
+    if project_id:
+        lq = lq.where(ActivityLog.project_id == project_id)
+    log_rows = (await db.execute(lq)).scalars().all()
+
+    buckets: dict[str, dict] = {}
+    for i in range(days):
+        d = (since_date + timedelta(days=i)).isoformat()
+        buckets[d] = {"date": d, "marked_done": 0, "approved": 0}
+
+    # Count each image at most once per day per transition, so re-marking the
+    # same image twice in a day does not inflate the trend.
+    seen_done: set[tuple[str, int]] = set()
+    seen_appr: set[tuple[str, int]] = set()
+    for r in log_rows:
+        created = _aware(r.created_at)
+        if not created:
+            continue
+        key = created.date().isoformat()
+        if key not in buckets or r.image_id is None:
+            continue
+        details = r.details or {}
+        to = details.get("to")
+        if r.action == Action.REVIEW_APPROVE or to == "approved":
+            if (key, r.image_id) not in seen_appr:
+                seen_appr.add((key, r.image_id))
+                buckets[key]["approved"] += 1
+        if to in DONE_STATUSES:
+            if (key, r.image_id) not in seen_done:
+                seen_done.add((key, r.image_id))
+                buckets[key]["marked_done"] += 1
+
+    series = list(buckets.values())
+    done_in_range = sum(b["marked_done"] for b in series)
+    approved_in_range = sum(b["approved"] for b in series)
+    per_day = done_in_range / days if done_in_range else 0.0
+    eta_days = round(remaining / per_day, 1) if per_day > 0 else None
+
+    # ── Per-project breakdown ────────────────────────────────────────
+    pq = select(Project.id, Project.name, Project.assigned_user_id).order_by(Project.id)
+    if project_id:
+        pq = pq.where(Project.id == project_id)
+    projects_out = []
+    for pid, pname, assignee_id in (await db.execute(pq)).all():
+        sq = (
+            select(Image.status, func.count())
+            .where(Image.project_id == pid)
+            .group_by(Image.status)
+        )
+        counts = {s: 0 for s in STATUSES}
+        for status_, n in (await db.execute(sq)).all():
+            if status_ in counts:
+                counts[status_] = n
+        p_total = sum(counts.values())
+        p_done = sum(counts[s] for s in DONE_STATUSES)
+        assignee = None
+        if assignee_id:
+            assignee = await db.scalar(
+                select(User.username).where(User.id == assignee_id)
+            )
+        projects_out.append({
+            "id": pid,
+            "name": pname,
+            "assignee": assignee,
+            "total": p_total,
+            "done": p_done,
+            "approved": counts["approved"],
+            "remaining": p_total - p_done,
+            "completion_pct": round(p_done / p_total * 100, 1) if p_total else 0.0,
+            "by_status": counts,
+        })
+
+    # ── Who finished how many images (replaces the annotation tally) ──
+    people = (
+        await db.execute(
+            select(User.id, User.username, User.full_name, User.role)
+            .where(User.status == "active")
+            .order_by(User.username)
+        )
+    ).all()
+    contributors_out = []
+    for uid, uname, ufull, urole in people:
+        base = select(func.count()).select_from(Image).where(
+            Image.id.in_(_images_of_user(uid))
+        )
+        if project_id:
+            base = base.where(Image.project_id == project_id)
+        c_assigned = await db.scalar(base) or 0
+        c_done = await db.scalar(base.where(Image.status.in_(DONE_STATUSES))) or 0
+        c_approved = await db.scalar(base.where(Image.status == "approved")) or 0
+        if c_assigned == 0 and urole != Role.ADMIN:
+            continue
+        contributors_out.append({
+            "user_id": uid,
+            "username": uname,
+            "full_name": ufull,
+            "role": urole,
+            "images_assigned": c_assigned,
+            "images_done": c_done,
+            "images_approved": c_approved,
+            "completion_pct": (
+                round(c_done / c_assigned * 100, 1) if c_assigned else 0.0
+            ),
+        })
+    contributors_out.sort(key=lambda r: r["images_done"], reverse=True)
+
+    return {
+        "range_days": days,
+        "project_id": project_id,
+        "total_images": total,
+        "done": done,
+        "remaining": remaining,
+        "approved": approved,
+        "completion_pct": round(done / total * 100, 1) if total else 0.0,
+        "approved_pct": round(approved / total * 100, 1) if total else 0.0,
+        "by_status": by_status,
+        "series": series,
+        "done_in_range": done_in_range,
+        "approved_in_range": approved_in_range,
+        "throughput_per_day": round(per_day, 2),
+        "projected_days_remaining": eta_days,
+        "projects": projects_out,
+        "contributors": contributors_out,
+    }
+
+
 @router.get("/velocity")
 async def velocity(
     project_id: int | None = None,

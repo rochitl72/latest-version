@@ -225,11 +225,21 @@ export default function AnnotationCanvas({
 
   const closeThreshold = () => Math.max(10 / scale, 8);
 
+  // Drawing needs a label class. Bbox and ellipse used to just throw the draft
+  // away when there wasn't one — you dragged a box, released, and absolutely
+  // nothing happened, with no message. Only polygon bothered to say why.
+  const requireLabel = () => {
+    if (activeLabelId != null) return true;
+    alert(
+      labels.length === 0
+        ? "This project has no label classes yet.\n\nAdd one in the right-hand panel (type a name, pick a colour, press +) before drawing."
+        : "Pick a label class first — click one in the right-hand panel.",
+    );
+    return false;
+  };
+
   const finishPolygon = async () => {
-    if (activeLabelId == null) {
-      alert("Create a label class first (right panel → type name → +).");
-      return;
-    }
+    if (!requireLabel()) return;
     if (draftPolygon.length < 3) {
       alert("Add at least 3 points by clicking on the image.");
       return;
@@ -291,10 +301,7 @@ export default function AnnotationCanvas({
     }
 
     if (activeTool === "polygon") {
-      if (activeLabelId == null) {
-        alert("Create a label class first (right panel → type name → +).");
-        return;
-      }
+      if (!requireLabel()) return;
       if (draftPolygon.length >= 3) {
         const [fx, fy] = draftPolygon[0];
         const dist = Math.hypot(p.x - fx, p.y - fy);
@@ -358,7 +365,13 @@ export default function AnnotationCanvas({
   const handleMouseUp = async () => {
     if (activeTool === "bbox" && draftBox && bboxStart) {
       setBboxStart(null);
-      if (draftBox.w < 4 || draftBox.h < 4 || activeLabelId == null) {
+      // Too small to be intentional — a stray click, not a drag. Discard
+      // quietly; nagging on every click would be worse than silence here.
+      if (draftBox.w < 4 || draftBox.h < 4) {
+        setDraftBox(null);
+        return;
+      }
+      if (!requireLabel()) {
         setDraftBox(null);
         return;
       }
@@ -379,7 +392,11 @@ export default function AnnotationCanvas({
 
     if (activeTool === "ellipse" && ellipseDraft && ellipseStart) {
       setEllipseStart(null);
-      if (ellipseDraft.rx < 3 || ellipseDraft.ry < 3 || activeLabelId == null) {
+      if (ellipseDraft.rx < 3 || ellipseDraft.ry < 3) {
+        setEllipseDraft(null);
+        return;
+      }
+      if (!requireLabel()) {
         setEllipseDraft(null);
         return;
       }
