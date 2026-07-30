@@ -16,7 +16,7 @@ import {
   updateImageStatus,
 } from "../../lib/api/client";
 import ReviewBar from "./ReviewBar";
-import { getCurrentUser } from "../../lib/auth";
+import { getCurrentUser, isAdmin } from "../../lib/auth";
 import OnboardingGuide, { shouldShowOnboarding } from "./OnboardingGuide";
 import ToolTipButton from "../common/ToolTipButton";
 import ImageGallerySidebar from "./ImageGallerySidebar";
@@ -119,6 +119,9 @@ export default function AnnotateView() {
     clear: clearHistory,
     push,
   } = useHistory();
+  // Only an admin may define label classes — see the Labels panel below.
+  const admin = isAdmin();
+
   const [labelName, setLabelName] = useState("");
   // Colour for the label class being created. Null means "not chosen yet", so
   // we fall back to the next unused palette colour at save time rather than
@@ -178,8 +181,12 @@ export default function AnnotateView() {
         setAnnotations(anns);
         if (lbls.length === 0) {
           setErr(
-            "This project has no label classes yet. Add one in the right-hand " +
-              "panel before drawing — a shape needs a class to belong to.",
+            admin
+              ? "This project has no label classes yet. Add one in the " +
+                  "right-hand panel before drawing — a shape needs a class " +
+                  "to belong to."
+              : "This project has no label classes yet, so there is nothing " +
+                  "to draw with. Ask an admin to set up the classes for it.",
           );
         }
       } catch (e) {
@@ -493,63 +500,80 @@ export default function AnnotateView() {
 
           <section>
             <h4>Labels</h4>
-            <p className="panel-hint">
-              A label is the kind of thing you are marking — <em>car</em>,{" "}
-              <em>person</em>, <em>pothole</em>. Add one, then draw.
-            </p>
-            <div className="new-label">
-              <input
-                placeholder="e.g. car"
-                value={labelName}
-                onChange={(e) => setLabelName(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && onAddLabel()}
-              />
 
-              <button onClick={onAddLabel} title="Add this label">
-                <Plus size={14} />
-              </button>
-            </div>
-
-            {/* Colour picker. Shapes are drawn in their class's colour, so
-                this is how you tell two classes apart on the canvas. */}
-            <div className="label-swatches">
-              <span className="label-swatches-hint">
-                Colour
-                <em>{labelColor ? "" : " · auto"}</em>
-              </span>
-              <div className="swatch-grid">
-                {LABEL_PALETTE.map((c) => {
-                  const active = labelColor === c;
-                  const used = labels.some(
-                    (l) => (l.color || "").toLowerCase() === c.toLowerCase(),
-                  );
-                  return (
-                    <button
-                      key={c}
-                      type="button"
-                      className={`swatch${active ? " active" : ""}`}
-                      style={{ background: c, color: contrastText(c) }}
-                      title={used ? `${c} — already used by another class` : c}
-                      aria-label={`Use colour ${c}`}
-                      aria-pressed={active}
-                      onClick={() => setLabelColor(active ? null : c)}
-                    >
-                      {active ? "✓" : used ? "·" : ""}
-                    </button>
-                  );
-                })}
-                <label
-                  className="swatch swatch-custom"
-                  title="Pick any custom colour"
-                >
+            {/* Label classes are the project's shared vocabulary: their name
+                and colour affect every annotator's canvas and every export, so
+                only an admin may define them. A plain user picks from the list
+                below but cannot add, recolour or remove a class.
+                The server enforces this too (require_admin on the label
+                routes) — hiding the controls just stops a user being offered
+                an action that would only come back as a 403. */}
+            {admin ? (
+              <>
+                <p className="panel-hint">
+                  A label is the kind of thing you are marking — <em>car</em>,{" "}
+                  <em>person</em>, <em>pothole</em>. Add one, then draw.
+                </p>
+                <div className="new-label">
                   <input
-                    type="color"
-                    value={labelColor || suggestLabelColor(labels)}
-                    onChange={(e) => setLabelColor(e.target.value)}
+                    placeholder="e.g. car"
+                    value={labelName}
+                    onChange={(e) => setLabelName(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && onAddLabel()}
                   />
-                </label>
-              </div>
-            </div>
+
+                  <button onClick={onAddLabel} title="Add this label">
+                    <Plus size={14} />
+                  </button>
+                </div>
+
+                {/* Shapes are drawn in their class's colour, so this is how
+                    you tell two classes apart on the canvas. */}
+                <div className="label-swatches">
+                  <span className="label-swatches-hint">
+                    Colour
+                    <em>{labelColor ? "" : " · auto"}</em>
+                  </span>
+                  <div className="swatch-grid">
+                    {LABEL_PALETTE.map((c) => {
+                      const active = labelColor === c;
+                      const used = labels.some(
+                        (l) => (l.color || "").toLowerCase() === c.toLowerCase(),
+                      );
+                      return (
+                        <button
+                          key={c}
+                          type="button"
+                          className={`swatch${active ? " active" : ""}`}
+                          style={{ background: c, color: contrastText(c) }}
+                          title={used ? `${c} — already used by another class` : c}
+                          aria-label={`Use colour ${c}`}
+                          aria-pressed={active}
+                          onClick={() => setLabelColor(active ? null : c)}
+                        >
+                          {active ? "✓" : used ? "·" : ""}
+                        </button>
+                      );
+                    })}
+                    <label
+                      className="swatch swatch-custom"
+                      title="Pick any custom colour"
+                    >
+                      <input
+                        type="color"
+                        value={labelColor || suggestLabelColor(labels)}
+                        onChange={(e) => setLabelColor(e.target.value)}
+                      />
+                    </label>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <p className="panel-hint">
+                Pick the class you are marking, then draw. Classes and their
+                colours are set up by an admin.
+              </p>
+            )}
 
 
             {err && (
@@ -577,15 +601,18 @@ export default function AnnotateView() {
                   <span className="count">
                     {annotations.filter((a) => a.label_id === l.id).length}
                   </span>
-                  <button
-                    className="del"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDeleteLabel(l.id);
-                    }}
-                  >
-                    <Trash2 size={11} />
-                  </button>
+                  {admin && (
+                    <button
+                      className="del"
+                      title="Delete this label class"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDeleteLabel(l.id);
+                      }}
+                    >
+                      <Trash2 size={11} />
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>

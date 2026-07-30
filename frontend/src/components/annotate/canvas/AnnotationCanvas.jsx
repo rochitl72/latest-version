@@ -21,6 +21,7 @@ import {
 } from "react-konva";
 import useImage from "use-image";
 
+import { isAdmin } from "../../../lib/auth";
 import { useEditor } from "../../../store/editor";
 import {
   useHistory,
@@ -230,11 +231,16 @@ export default function AnnotationCanvas({
   // nothing happened, with no message. Only polygon bothered to say why.
   const requireLabel = () => {
     if (activeLabelId != null) return true;
-    alert(
-      labels.length === 0
-        ? "This project has no label classes yet.\n\nAdd one in the right-hand panel (type a name, pick a colour, press +) before drawing."
-        : "Pick a label class first — click one in the right-hand panel.",
-    );
+    if (labels.length > 0) {
+      alert("Pick a label class first — click one in the right-hand panel.");
+    } else {
+      // Only an admin can create classes, so don't tell a plain user to.
+      alert(
+        isAdmin()
+          ? "This project has no label classes yet.\n\nAdd one in the right-hand panel (type a name, pick a colour, press +) before drawing."
+          : "This project has no label classes yet, so there is nothing to draw with.\n\nAsk an admin to set up the classes for this project.",
+      );
+    }
     return false;
   };
 
