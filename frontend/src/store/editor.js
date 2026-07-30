@@ -12,6 +12,8 @@
 
 import { create } from "zustand";
 
+import { isAdmin } from "../lib/auth";
+
 export const useEditor = create((set) => ({
   scale: 1,
   offsetX: 0,
@@ -32,7 +34,14 @@ export const useEditor = create((set) => ({
 
   imageStatus: "unannotated",
   readOnly: false,
-  setImageStatus: (s) => set({ imageStatus: s, readOnly: s === "approved" }),
+  // An approved image is frozen — but only for a plain user. The server has
+  // always allowed an admin to edit approved work
+  // (`if img.status == "approved" and not user.can_review`), while this flag
+  // locked the canvas for everyone. An admin who spotted a mistake in
+  // something they had approved could not fix it, despite the API being happy
+  // to accept the edit. The two now agree.
+  setImageStatus: (s) =>
+    set({ imageStatus: s, readOnly: s === "approved" && !isAdmin() }),
 
   labels: [],
   activeLabelId: null,

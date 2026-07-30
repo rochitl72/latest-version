@@ -2464,3 +2464,7 @@ body {
 .review-bar .seg:focus-visible {
   outline: 2px solid var(--accent, #6B4EFF); outline-offset: -2px;
 }
+.review-bar .seg:disabled {
+  opacity: .45; cursor: not-allowed;
+}
+.review-bar .seg:disabled:hover { color: var(--muted); }

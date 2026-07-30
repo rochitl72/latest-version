@@ -26,6 +26,10 @@ export default function ReviewBar({
   onStatusChange,
 }) {
   const [err, setErr] = useState(null);
+  const admin = isAdmin();
+  // Only an admin may take an image back out of approval. Disable the progress
+  // buttons for everyone else rather than letting them click into a 403.
+  const lockedForUser = status === "approved" && !admin;
 
   const setStatus = async (s) => {
     setErr(null);
@@ -49,9 +53,9 @@ export default function ReviewBar({
       <p className="review-note">
         Optional — marks progress for your team. Export works anytime.
       </p>
-      {readOnly && (
+      {lockedForUser && (
         <p className="review-lock">
-          Approved — read-only. Set status to In progress to edit again.
+          Approved and locked. Ask an admin to reopen it if it needs more work.
         </p>
       )}
       {err && (
@@ -75,6 +79,12 @@ export default function ReviewBar({
               type="button"
               className={`seg seg-${s.id}${status === s.id ? " active" : ""}`}
               aria-pressed={status === s.id}
+              disabled={lockedForUser}
+              title={
+                lockedForUser
+                  ? "Approved — only an admin can reopen this image"
+                  : undefined
+              }
               onClick={() => setStatus(s.id)}
             >
               {s.label}
@@ -83,7 +93,7 @@ export default function ReviewBar({
         </div>
       </div>
 
-      {isAdmin() && (
+      {admin && (
         <div className="review-group">
           <span className="review-group-label">
             Review decision

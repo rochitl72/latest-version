@@ -54,12 +54,30 @@ class BulkDeleteRequest(BaseModel):
     annotation_ids: list[int]
 
 
-def _check_status_permission(user: User, status: str) -> None:
+def _check_status_permission(user: User, status: str, current: str | None = None) -> None:
+    """Guard both ENDS of the transition.
+
+    Checking only the destination was a real hole: `in_progress` is not a
+    review status, so an assigned user could take an APPROVED image back to
+    `in_progress` and then edit it freely — the annotation endpoint's
+    "approved and locked" 403 was one click away from being bypassed, and the
+    UI even told them to do it. An approval has to be undoable only by
+    someone who could have granted it.
+
+    Leaving `rejected` is deliberately NOT restricted: the whole point of a
+    rejection is that the annotator picks the image back up and fixes it.
+    """
     if status in REVIEW_STATUSES and not user.can_review:
         raise HTTPException(
             403,
             f"Setting an image to {status!r} is a review decision and requires "
             f"the admin role.",
+        )
+    if current == "approved" and status != "approved" and not user.can_review:
+        raise HTTPException(
+            403,
+            "This image has been approved. Only an admin can reopen it — ask "
+            "an admin to move it back to 'In progress' if it needs more work.",
         )
 
 
@@ -72,6 +90,14 @@ async def _apply_status(
         img.reviewed_by = user.id
         img.reviewed_at = utcnow()
         img.review_note = note
+    elif previous in REVIEW_STATUSES:
+        # Leaving a review state: drop the old verdict. These fields used to
+        # persist, so a rejected image pulled back to `in_progress` still
+        # carried the reviewer's name, timestamp and rejection note and looked
+        # as though it had been reviewed in its current state.
+        img.reviewed_by = None
+        img.reviewed_at = None
+        img.review_note = ""
     await activity.record(
         db, user, STATUS_ACTION.get(status, Action.IMAGE_STATUS),
         project_id=img.project_id, image_id=img.id,
@@ -87,11 +113,13 @@ async def update_image_status(
 ):
     if payload.status not in VALID_STATUS:
         raise HTTPException(400, f"Invalid status. Use: {VALID_STATUS}")
-    _check_status_permission(user, payload.status)
 
     # Membership first: a non-member (non-admin) must not touch this image even
-    # if they somehow know its id.
+    # if they somehow know its id. Loading it here also gives us the CURRENT
+    # status, which the permission check needs — leaving `approved` is itself
+    # a privileged move, not just entering one.
     img = await membership.assert_member_by_image(db, payload.image_id, user)
+    _check_status_permission(user, payload.status, img.status)
 
     await _apply_status(db, user, img, payload.status, payload.note)
     await db.commit()
@@ -110,6 +138,7 @@ async def bulk_update_status(
     _check_status_permission(user, payload.status)
 
     updated = 0
+    locked = 0
     for iid in payload.image_ids:
         img = await db.get(Image, iid)
         if not img:
@@ -118,10 +147,16 @@ async def bulk_update_status(
         # whole batch — the counts tell them how many actually changed.
         if not await membership.is_member(db, img.project_id, user):
             continue
+        # Same rule as the single update: a non-admin cannot pull an approved
+        # image back out of approval, in bulk any more than one at a time.
+        if img.status == "approved" and payload.status != "approved" \
+                and not user.can_review:
+            locked += 1
+            continue
         await _apply_status(db, user, img, payload.status, payload.note)
         updated += 1
     await db.commit()
-    return {"ok": True, "updated": updated}
+    return {"ok": True, "updated": updated, "skipped_approved": locked}
 
 
 @router.post("/annotations/bulk-delete")
