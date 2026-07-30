@@ -5,7 +5,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from PIL import Image as PILImage, ImageDraw, ImageFont
+from PIL import Image as PILImage
 
 from app.services.export.rle_utils import internal_rle_to_mask, polygon_to_mask
 from app.models import Annotation, Label
@@ -102,18 +102,40 @@ def render_overlay(
     cv2.imwrite(str(out_path), overlay)
 
 
+_FONT = cv2.FONT_HERSHEY_SIMPLEX
+_FONT_SCALE = 0.45
+_FONT_THICK = 1
+
+
 def _draw_label(img, text: str, x: int, y: int, bgr: tuple[int, int, int]) -> None:
-    pil = PILImage.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-    draw = ImageDraw.Draw(pil)
-    try:
-        font = ImageFont.truetype("arial.ttf", 14)
-    except OSError:
-        font = ImageFont.load_default()
-    bbox = draw.textbbox((x, y), text, font=font)
-    pad = 2
-    draw.rectangle(
-        [bbox[0] - pad, bbox[1] - pad, bbox[2] + pad, bbox[3] + pad],
-        fill=(bgr[2], bgr[1], bgr[0]),
+    """Draw a filled caption chip with the text on top, in place.
+
+    Uses OpenCV's own text rendering rather than round-tripping through PIL.
+    The old version did, for EVERY label on the image:
+        BGR array -> RGB -> PIL Image -> draw -> numpy -> BGR array
+    which is four full-image copies per annotation — O(width x height) work to
+    paint a caption a few dozen pixels wide. On a 1920x1080 photo that was
+    ~15 ms each, so a fifteen-shape image spent a quarter of a second just
+    converting colour spaces. This touches only the caption's own pixels.
+    """
+    (tw, th), baseline = cv2.getTextSize(text, _FONT, _FONT_SCALE, _FONT_THICK)
+    pad = 3
+    h, w = img.shape[:2]
+
+    # Keep the chip on-canvas: a caption for a shape at the very top would
+    # otherwise be drawn at a negative y and silently clipped away.
+    x0 = max(0, min(int(x), w - (tw + 2 * pad) - 1))
+    y1 = max(th + 2 * pad, min(int(y), h - 1))
+    y0 = y1 - (th + 2 * pad)
+
+    cv2.rectangle(img, (x0, y0), (x0 + tw + 2 * pad, y1), bgr, -1)
+    cv2.putText(
+        img,
+        text,
+        (x0 + pad, y1 - pad - baseline // 2),
+        _FONT,
+        _FONT_SCALE,
+        (255, 255, 255),
+        _FONT_THICK,
+        cv2.LINE_AA,
     )
-    draw.text((x, y), text, fill=(255, 255, 255), font=font)
-    img[:] = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)

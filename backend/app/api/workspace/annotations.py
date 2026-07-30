@@ -12,8 +12,9 @@ An image with status "approved" is frozen to everyone but an admin.
 import json
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,22 +31,150 @@ router = APIRouter(prefix="/api", tags=["annotations"])
 log = logging.getLogger("annoforge.annotations")
 
 
-async def _sync_export_artifacts(
-    db: AsyncSession, image: Image, action: str, user: User | None,
-) -> None:
-    """After every annotation create/update/delete, refresh everything under
-    this image's `annotation/{project}/` folder:
-      * json/{id}.json      — the DB-backed per-image backup (unchanged)
-      * overlays/{id}_*.png — the annotation redrawn on top of the image
-      * yolo/labels/.../.txt — this image's YOLO label file
-      * coco/annotations_coco.json — this image's entries patched in place
-      * logs/activity.log   — one line for this project
+# ─── Derived artifacts (overlay / COCO / YOLO / logs) ────────────────
+# These are written to disk on every annotation change, but NOT on the request
+# path. Doing them inline made saving a shape take seconds: rendering the
+# overlay reads and re-encodes the whole photo, and the seven file writes land
+# on a bind-mounted volume, which on Docker Desktop for macOS is an order of
+# magnitude slower than a native write. The user clicked to close a polygon and
+# waited three or four seconds for it to appear.
+#
+# Now the request does only the database work and hands a plain-data payload to
+# a background task. FastAPI runs a SYNC background function in a threadpool, so
+# the blocking encode never stalls the event loop either. Postgres remains the
+# authoritative store; everything here is a mirror that can lag by a moment.
 
-    Scoped to a single image throughout (never re-scans the whole project), so
-    a single annotation save stays cheap regardless of project size. Postgres
-    remains the authoritative, queryable store; everything here is a mirror.
-    Best-effort: a disk failure must never roll back a saved annotation, so
-    every step is wrapped and swallowed rather than raised.
+
+def _write_artifacts(payload: dict) -> None:
+    """Pure file I/O + rendering. No database access — by the time this runs the
+    request's session is closed, so it is handed plain values only."""
+    try:
+        owner = payload["owner"]
+        proj = payload["project"]
+        image = payload["image"]
+        anns = payload["annotations"]
+        labels = payload["labels"]
+
+        args = (owner["id"], owner["username"], owner["role"], proj["id"], proj["name"])
+
+        # ── overlay: the annotations drawn on top of the image ──
+        overlay_path = storage.overlay_file_path(
+            *args, image["id"], image["filename"]
+        )
+        src = Path(image["storage_path"]) if image["storage_path"] else None
+        if anns and src and src.is_file():
+            try:
+                render_overlay(
+                    src,
+                    [SimpleNamespace(**a) for a in anns],
+                    {l["id"]: SimpleNamespace(**l) for l in labels},
+                    overlay_path,
+                    image["width"],
+                    image["height"],
+                )
+            except Exception:
+                log.exception("Failed rendering overlay for image %s", image["id"])
+        else:
+            # No shapes left (or the source is gone) — a stale overlay must not
+            # outlive the annotations it depicts.
+            overlay_path.unlink(missing_ok=True)
+
+        # ── this image's YOLO label file + the shared class files ──
+        label_idx = {l["id"]: i for i, l in enumerate(labels)}
+        yolo_root, yolo_labels_root = storage.yolo_dirs(*args)
+        split = image["split"] if image["split"] in ("train", "val", "test") else "train"
+        split_dir = yolo_labels_root / split
+        split_dir.mkdir(parents=True, exist_ok=True)
+        stem = Path(image["filename"]).stem
+        lines = []
+        for a in anns:
+            if a["label_id"] not in label_idx:
+                continue
+            line = yolo_seg_line(
+                SimpleNamespace(**a), label_idx[a["label_id"]],
+                image["width"], image["height"],
+            )
+            if line:
+                lines.append(line)
+        (split_dir / f"{stem}.txt").write_text("\n".join(lines))
+        (yolo_root / "classes.txt").write_text(
+            "\n".join(l["name"] for l in labels) + ("\n" if labels else "")
+        )
+        (yolo_root / "data.yaml").write_text(
+            f"# YOLO labels for project {proj['name']!r}. Images live in the\n"
+            f"# sibling project/{proj['id']}_{storage._safe(proj['name'])}/images/ folder.\n"
+            f"train: labels/train\nval: labels/val\ntest: labels/test\n\n"
+            f"nc: {len(labels)}\nnames: {[l['name'] for l in labels]}\n"
+        )
+
+        # ── patch this image's entries into the project's live COCO file ──
+        coco_id = {l["id"]: i + 1 for i, l in enumerate(labels)}
+        coco_path = storage.coco_export_path(*args)
+        coco = {
+            "info": {"description": f"RBG export: {proj['name']}", "version": "1.0"},
+            "licenses": [], "images": [], "annotations": [], "categories": [],
+        }
+        if coco_path.is_file():
+            try:
+                coco = json.loads(coco_path.read_text())
+            except Exception:
+                log.warning(
+                    "COCO export for project %s unreadable; rebuilding", proj["id"]
+                )
+        coco["categories"] = [
+            {"id": coco_id[l["id"]], "name": l["name"], "supercategory": "object"}
+            for l in labels
+        ]
+        coco["images"] = [
+            im for im in coco.get("images", []) if im.get("id") != image["id"]
+        ]
+        coco["annotations"] = [
+            a for a in coco.get("annotations", []) if a.get("image_id") != image["id"]
+        ]
+        coco["images"].append({
+            "id": image["id"], "file_name": image["filename"],
+            "width": image["width"], "height": image["height"],
+        })
+        img_ns = SimpleNamespace(width=image["width"], height=image["height"])
+        for a in anns:
+            if a["label_id"] not in coco_id:
+                continue
+            try:
+                seg, bbox, area = coco_segmentation(SimpleNamespace(**a), img_ns)
+            except ValueError:
+                continue
+            coco["annotations"].append({
+                "id": a["id"], "image_id": image["id"],
+                "category_id": coco_id[a["label_id"]],
+                "segmentation": seg, "area": area, "bbox": bbox, "iscrowd": 0,
+            })
+        tmp = coco_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(coco, indent=2, default=str))
+        tmp.replace(coco_path)
+
+        # ── project-scoped log line ──
+        storage.append_project_log(
+            *args,
+            f"{payload['action']} image={image['id']} ({image['filename']}) "
+            f"annotations={len(anns)} by={payload['actor']}",
+        )
+    except Exception:  # pragma: no cover - a mirror must never crash anything
+        log.exception("Failed writing export artifacts")
+
+
+async def _sync_export_artifacts(
+    db: AsyncSession,
+    image: Image,
+    action: str,
+    user: User | None,
+    background: BackgroundTasks | None = None,
+) -> None:
+    """Mirror this image's annotations to disk.
+
+    The small JSON backup is written inline (it is a few KB and its path is
+    stored on the image row). Everything expensive — the overlay render, the
+    COCO rewrite, the YOLO files — is handed to `background` so the caller can
+    respond immediately.
     """
     try:
         project = await db.get(Project, image.project_id)
@@ -60,15 +189,10 @@ async def _sync_export_artifacts(
                 select(Label).where(Label.project_id == project.id).order_by(Label.id)
             )
         ).scalars().all()
-        labels_by_id = {l.id: l for l in labels}
-        label_id_to_idx = {l.id: idx for idx, l in enumerate(labels)}
-        label_id_to_coco = {l.id: idx + 1 for idx, l in enumerate(labels)}
-
         rows = (await db.execute(
             select(Annotation).where(Annotation.image_id == image.id).order_by(Annotation.id)
         )).scalars().all()
 
-        # ── 1. annotations.json backup ──────────────────────────────
         ann_list = [
             {
                 "id": a.id,
@@ -82,113 +206,53 @@ async def _sync_export_artifacts(
             }
             for a in rows
         ]
-        meta = {
-            "image_id": image.id,
-            "project_id": image.project_id,
-            "filename": image.filename,
-            "width": image.width,
-            "height": image.height,
-            "status": image.status,
-        }
+
+        # Inline: the JSON backup. Small, and images.annotations_path must point
+        # at it as part of this transaction.
         json_path = storage.annotations_file_path(
             owner.id, owner.username, owner.role, project.id, project.name, image.id,
         )
-        storage.write_annotations_json(json_path, meta, ann_list)
+        storage.write_annotations_json(
+            json_path,
+            {
+                "image_id": image.id,
+                "project_id": image.project_id,
+                "filename": image.filename,
+                "width": image.width,
+                "height": image.height,
+                "status": image.status,
+            },
+            ann_list,
+        )
         image.annotations_path = str(json_path)
 
-        # ── 2. overlay PNG (annotations drawn on the image) ─────────
-        overlay_path = storage.overlay_file_path(
-            owner.id, owner.username, owner.role, project.id, project.name,
-            image.id, image.filename,
-        )
-        src = Path(image.storage_path)
-        if rows and src.is_file():
-            try:
-                render_overlay(
-                    src, rows, labels_by_id, overlay_path, image.width, image.height,
-                )
-            except Exception:
-                log.exception("Failed rendering overlay for image %s", image.id)
-        else:
-            # No annotations left (or the source file is gone) — no overlay
-            # should remain either, so a stale one doesn't outlive its shapes.
-            overlay_path.unlink(missing_ok=True)
-
-        # ── 3. this image's YOLO label file + the shared classes/data.yaml ──
-        split = image.split if image.split in ("train", "val", "test") else "train"
-        yolo_root, yolo_labels_root = storage.yolo_dirs(
-            owner.id, owner.username, owner.role, project.id, project.name,
-        )
-        yolo_split_dir = yolo_labels_root / split
-        yolo_split_dir.mkdir(parents=True, exist_ok=True)
-        stem = Path(image.filename).stem
-        yolo_lines = []
-        for a in rows:
-            if a.label_id not in label_id_to_idx:
-                continue
-            line = yolo_seg_line(a, label_id_to_idx[a.label_id], image.width, image.height)
-            if line:
-                yolo_lines.append(line)
-        (yolo_split_dir / f"{stem}.txt").write_text("\n".join(yolo_lines))
-        (yolo_root / "classes.txt").write_text(
-            "\n".join(l.name for l in labels) + ("\n" if labels else "")
-        )
-        (yolo_root / "data.yaml").write_text(
-            f"# YOLO labels for project {project.name!r}. Images live in the\n"
-            f"# sibling project/{project.id}_{storage._safe(project.name)}/images/ folder.\n"
-            f"train: labels/train\nval: labels/val\ntest: labels/test\n\n"
-            f"nc: {len(labels)}\nnames: {[l.name for l in labels]}\n"
-        )
-
-        # ── 4. patch this image's entries into the project's live COCO file ──
-        coco_path = storage.coco_export_path(
-            owner.id, owner.username, owner.role, project.id, project.name,
-        )
-        coco = {
-            "info": {"description": f"RBG export: {project.name}", "version": "1.0"},
-            "licenses": [], "images": [], "annotations": [], "categories": [],
+        # Deferred: everything that reads or re-encodes the image.
+        payload = {
+            "action": action,
+            "actor": user.username if user else "system",
+            "owner": {"id": owner.id, "username": owner.username, "role": owner.role},
+            "project": {"id": project.id, "name": project.name},
+            "image": {
+                "id": image.id, "filename": image.filename,
+                "width": image.width, "height": image.height,
+                "split": image.split, "storage_path": image.storage_path,
+            },
+            "annotations": ann_list,
+            "labels": [
+                {
+                    "id": l.id, "name": l.name, "color": l.color,
+                    "keypoint_names": l.keypoint_names,
+                }
+                for l in labels
+            ],
         }
-        if coco_path.is_file():
-            try:
-                coco = json.loads(coco_path.read_text())
-            except Exception:
-                log.warning("Existing coco export for project %s unreadable; rebuilding", project.id)
-        coco["categories"] = [
-            {"id": label_id_to_coco[l.id], "name": l.name, "supercategory": "object"}
-            for l in labels
-        ]
-        coco["images"] = [im for im in coco.get("images", []) if im.get("id") != image.id]
-        coco["annotations"] = [
-            a for a in coco.get("annotations", []) if a.get("image_id") != image.id
-        ]
-        coco["images"].append({
-            "id": image.id, "file_name": image.filename,
-            "width": image.width, "height": image.height,
-        })
-        for a in rows:
-            if a.label_id not in label_id_to_coco:
-                continue
-            try:
-                seg, bbox, area = coco_segmentation(a, image)
-            except ValueError:
-                continue
-            coco["annotations"].append({
-                "id": a.id, "image_id": image.id,
-                "category_id": label_id_to_coco[a.label_id],
-                "segmentation": seg, "area": area, "bbox": bbox, "iscrowd": 0,
-            })
-        tmp = coco_path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(coco, indent=2, default=str))
-        tmp.replace(coco_path)
-
-        # ── 5. project-scoped log line ───────────────────────────────
-        storage.append_project_log(
-            owner.id, owner.username, owner.role, project.id, project.name,
-            f"{action} image={image.id} ({image.filename}) annotations={len(rows)} "
-            f"by={user.username if user else 'system'}",
-        )
+        if background is not None:
+            background.add_task(_write_artifacts, payload)
+        else:
+            _write_artifacts(payload)
     except Exception:  # pragma: no cover - backup must never break the request
-        log.exception("Failed syncing export artifacts for image %s", image.id)
+        log.exception("Failed syncing annotations for image %s", image.id)
+
 
 
 class AnnotationCreate(BaseModel):
@@ -259,6 +323,7 @@ async def list_annotations(
 @router.post("/annotations", response_model=AnnotationOut)
 async def create_annotation(
     payload: AnnotationCreate,
+    background: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(current_user),
 ):
@@ -285,7 +350,7 @@ async def create_annotation(
         project_id=img.project_id, image_id=img.id, annotation_id=ann.id,
         details={"type": ann.type, "label_id": ann.label_id},
     )
-    await _sync_export_artifacts(db, img, Action.ANNOTATION_CREATE, user)
+    await _sync_export_artifacts(db, img, Action.ANNOTATION_CREATE, user, background)
     await db.commit()
     await db.refresh(ann)
     return ann
@@ -295,6 +360,7 @@ async def create_annotation(
 async def update_annotation(
     annotation_id: int,
     payload: AnnotationUpdate,
+    background: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(current_user),
 ):
@@ -326,7 +392,7 @@ async def update_annotation(
                                              "label_id": ann.label_id}},
     )
     if img:
-        await _sync_export_artifacts(db, img, Action.ANNOTATION_UPDATE, user)
+        await _sync_export_artifacts(db, img, Action.ANNOTATION_UPDATE, user, background)
     await db.commit()
     await db.refresh(ann)
     return ann
@@ -335,6 +401,7 @@ async def update_annotation(
 @router.delete("/annotations/{annotation_id}")
 async def delete_annotation(
     annotation_id: int,
+    background: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(current_user),
 ):
@@ -358,6 +425,6 @@ async def delete_annotation(
     await db.delete(ann)
     await db.flush()
     if img:
-        await _sync_export_artifacts(db, img, Action.ANNOTATION_DELETE, user)
+        await _sync_export_artifacts(db, img, Action.ANNOTATION_DELETE, user, background)
     await db.commit()
     return {"ok": True}
